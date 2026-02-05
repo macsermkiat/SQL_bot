@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}KCMH SQL Bot{% endblock %}
+{% block body_class %}chat-page{% endblock %}
+
+{% block content %}
+<header class="chat-header">
+    <div class="header-left">
+        <h1>KCMH SQL Bot</h1>
+        <span class="header-subtitle">Analytics Assistant</span>
+    </div>
+    <div class="header-right">
+        <span class="user-info">{{ user.name }} ({{ user.department }})</span>
+        <form method="POST" action="/logout" class="logout-form">
+            <button type="submit" class="logout-button">Logout</button>
+        </form>
+    </div>
+</header>
+
+<main class="chat-main">
+    <div id="chat-container" class="chat-container">
+        <div class="message assistant">
+            <div class="message-content">
+                Welcome! Ask me analytical questions about hospital data in Thai or English.<br><br>
+                Examples:<br>
+                - How many OPD visits were there last year?<br>
+                - What percentage of patients have diabetes?<br>
+                - มีผู้ป่วยเบาหวานกี่คนในปีที่แล้ว?
+            </div>
+        </div>
+    </div>
+
+    <form id="input-form" class="input-form">
+        <input
+            type="text"
+            id="message-input"
+            class="message-input"
+            placeholder="Ask a question about hospital data..."
+            autocomplete="off"
+            required
+        >
+        <button type="submit" id="send-button" class="send-button">Send</button>
+    </form>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    window.USER_ROLE = "{{ user.role }}";
+</script>
+<script src="/static/js/chat.js"></script>
+{% endblock %}

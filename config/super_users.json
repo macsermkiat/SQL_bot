@@ -1,0 +1,7 @@
+{
+  "super_users": [
+    "admin@chulahospital.org",
+    "kammant.p@chulahospital.org"
+  ],
+  "_comment": "Add email addresses of users who should have super_user role (can see generated SQL)"
+}

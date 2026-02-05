@@ -1,0 +1,124 @@
+# Clinical Concept Definitions for KCMH SQL Bot
+# These mappings help translate clinical questions into SQL conditions
+
+diabetes_icd10:
+  description: "Diabetes mellitus (ICD-10 E10-E14)"
+  condition: "icd10 LIKE 'E1%' AND icd10 >= 'E10' AND icd10 < 'E15'"
+  icd10_codes:
+    - "E10"  # Type 1 diabetes
+    - "E11"  # Type 2 diabetes
+    - "E12"  # Malnutrition-related diabetes
+    - "E13"  # Other specified diabetes
+    - "E14"  # Unspecified diabetes
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+  notes: "Use >= and < for range to handle subcodes like E11.9"
+
+diabetes_type1:
+  description: "Type 1 Diabetes mellitus (ICD-10 E10)"
+  condition: "icd10 LIKE 'E10%'"
+  icd10_codes:
+    - "E10"
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+
+diabetes_type2:
+  description: "Type 2 Diabetes mellitus (ICD-10 E11)"
+  condition: "icd10 LIKE 'E11%'"
+  icd10_codes:
+    - "E11"
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+
+hypertension:
+  description: "Essential hypertension (ICD-10 I10-I15)"
+  condition: "icd10 LIKE 'I1%' AND icd10 >= 'I10' AND icd10 < 'I16'"
+  icd10_codes:
+    - "I10"  # Essential (primary) hypertension
+    - "I11"  # Hypertensive heart disease
+    - "I12"  # Hypertensive renal disease
+    - "I13"  # Hypertensive heart and renal disease
+    - "I15"  # Secondary hypertension
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+
+thyroid_function_test:
+  description: "Thyroid function test bundle (FT3, FT4, TSH)"
+  tests:
+    - "FT3"
+    - "FT4"
+    - "TSH"
+    - "Free T3"
+    - "Free T4"
+  bundle_logic: "same_visit"
+  tables:
+    - "LABEXM"
+  notes: "Bundle = all three tests ordered in same visit (vn)"
+
+complete_blood_count:
+  description: "Complete Blood Count (CBC)"
+  tests:
+    - "CBC"
+    - "Hb"
+    - "Hct"
+    - "WBC"
+    - "Platelet"
+  tables:
+    - "LABEXM"
+
+lipid_profile:
+  description: "Lipid profile panel"
+  tests:
+    - "Total Cholesterol"
+    - "Triglyceride"
+    - "HDL"
+    - "LDL"
+    - "VLDL"
+  bundle_logic: "same_visit"
+  tables:
+    - "LABEXM"
+
+kidney_function:
+  description: "Kidney function tests"
+  tests:
+    - "BUN"
+    - "Creatinine"
+    - "eGFR"
+  tables:
+    - "LABEXM"
+
+liver_function:
+  description: "Liver function tests"
+  tests:
+    - "AST"
+    - "ALT"
+    - "ALP"
+    - "Total Bilirubin"
+    - "Direct Bilirubin"
+    - "Albumin"
+  tables:
+    - "LABEXM"
+
+opd_visit:
+  description: "Outpatient department visit"
+  tables:
+    - "OVST"
+  notes: "Primary key is vn (visit number)"
+
+ipd_admission:
+  description: "Inpatient admission"
+  tables:
+    - "IPT"
+  notes: "Primary key is an (admission number)"
+
+emergency_visit:
+  description: "Emergency department visit"
+  condition: "ovstist = 'ER' OR cliniclct IN (SELECT cliniclct FROM CLINICLCT WHERE prefix LIKE 'ER%')"
+  tables:
+    - "OVST"
+    - "CLINICLCT"
+  notes: "May need to verify ER clinic codes in CLINICLCT"

@@ -78,6 +78,21 @@ Your task is to convert natural language questions into safe, read-only SQL quer
 5. **REQUIRE LIMIT**: Non-aggregate queries MUST have LIMIT (max 2000)
 6. **DATE FILTERS**: Always include date filters for large tables
 
+## POSTGRESQL SYNTAX RULES (CRITICAL)
+
+All tables are in the "KCMH_HIS" schema. You MUST:
+1. **ALWAYS use double quotes** for all identifiers (schema, table, column names)
+2. **ALWAYS prefix tables** with the schema "KCMH_HIS"
+3. **Format**: "KCMH_HIS"."TABLE_NAME"."column_name"
+
+Examples:
+- Table reference: "KCMH_HIS"."OVST"
+- Column reference: "KCMH_HIS"."OVST"."vn"
+- Join example: "KCMH_HIS"."OVST" JOIN "KCMH_HIS"."PTDIAG" ON "KCMH_HIS"."OVST"."vn" = "KCMH_HIS"."PTDIAG"."vn"
+
+WRONG: SELECT vn FROM OVST
+CORRECT: SELECT "vn" FROM "KCMH_HIS"."OVST"
+
 ## CRITICAL: USE ONLY LISTED TABLES AND COLUMNS
 
 **YOU MUST ONLY USE TABLES AND COLUMNS EXPLICITLY LISTED BELOW.**

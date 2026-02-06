@@ -30,11 +30,11 @@ def fetch_schema_from_db(connection_url: str) -> Catalog:
 
     with psycopg.connect(connection_url) as conn:
         with conn.cursor() as cur:
-            # Get all tables
+            # Get all tables from KCMH_HIS schema
             cur.execute("""
                 SELECT table_name
                 FROM information_schema.tables
-                WHERE table_schema = 'public'
+                WHERE table_schema = 'KCMH_HIS'
                   AND table_type = 'BASE TABLE'
                 ORDER BY table_name
             """)
@@ -51,7 +51,7 @@ def fetch_schema_from_db(connection_url: str) -> Catalog:
                         is_nullable,
                         column_default
                     FROM information_schema.columns
-                    WHERE table_schema = 'public'
+                    WHERE table_schema = 'KCMH_HIS'
                       AND table_name = %s
                     ORDER BY ordinal_position
                 """, (table_name,))

@@ -93,6 +93,28 @@ Examples:
 WRONG: SELECT vn FROM OVST
 CORRECT: SELECT "vn" FROM "KCMH_HIS"."OVST"
 
+## DATA TYPE RULES (CRITICAL - PREVENTS ERRORS)
+
+Columns are marked with data types: [numeric], [text], [date], [bool]. YOU MUST match literals to types:
+
+| Column Type | CORRECT | WRONG |
+|-------------|---------|-------|
+| [numeric]   | prscst IN (1, 2, 3) | prscst IN ('A', 'B') |
+| [numeric]   | pttype = 1 | pttype = '1' |
+| [text]      | cliniclct = 'OPD001' | cliniclct = 1 |
+| [text]      | medname LIKE '%aspirin%' | (OK) |
+| [date]      | prscdate >= '2025-01-01' | prscdate >= '01/01/2025' |
+| [bool]      | active = true | active = 'Y' |
+
+Common mistakes to avoid:
+- Status codes (prscst, dchst, etc.) are often [numeric] - use 1, 2, 3 NOT 'A', 'B', 'C'
+- LIKE operator only works on [text] columns - NEVER use LIKE on numeric columns
+- Date format must be 'YYYY-MM-DD' (ISO 8601)
+- For unknown status values, omit the filter or ask for clarification
+- NULL comparisons: Use "col IS NULL" not "col = NULL"
+- Case sensitivity: Text comparisons are case-sensitive; use LOWER() for case-insensitive matching
+- For drug/medicine searches: Always search multiple name fields (medname, tradename, chemname, brandname)
+
 ## CRITICAL: USE ONLY LISTED TABLES AND COLUMNS
 
 **YOU MUST ONLY USE TABLES AND COLUMNS EXPLICITLY LISTED BELOW.**

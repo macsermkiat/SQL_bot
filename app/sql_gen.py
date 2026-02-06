@@ -104,8 +104,20 @@ def build_schema_context(catalog: SchemaCatalog, max_tables: int = 60) -> str:
         # Columns with metadata
         col_parts = []
         for col_name, col in sorted(table.columns.items()):
-            # Build column display
+            # Build column display with DATA TYPE
             markers = []
+
+            # Add data type (critical for correct SQL generation)
+            dtype = col.data_type.lower() if col.data_type else "unknown"
+            if "varchar" in dtype or "text" in dtype or "char" in dtype:
+                markers.append("text")
+            elif "numeric" in dtype or "int" in dtype or "decimal" in dtype:
+                markers.append("numeric")
+            elif "timestamp" in dtype or "date" in dtype:
+                markers.append("date")
+            elif "bool" in dtype:
+                markers.append("bool")
+
             if col.is_phi:
                 markers.append("PHI")
             if col.is_pk:

@@ -9,8 +9,9 @@ Multi-layer validation using sqlglot:
 5. PHI blocking (no PHI columns in SELECT output)
 6. LIMIT enforcement (non-aggregate queries)
 7. No SELECT * (explicit columns required)
+8. Join confidence validation (warn on low-confidence joins)
 
-Integration with catalog.py for schema grounding.
+Integration with schema_catalog for enhanced schema grounding.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from sqlglot import exp
 from sqlglot.errors import ParseError
 
 if TYPE_CHECKING:
-    from app.catalog import Catalog
+    from app.schema_catalog import SchemaCatalog
 
 # Forbidden SQL keywords - reject immediately if found
 FORBIDDEN_KEYWORDS: frozenset[str] = frozenset({
@@ -100,6 +101,18 @@ class SQLParseError(SQLGuardError):
 
 
 @dataclass
+class JoinWarning:
+    """Warning about a potentially problematic join."""
+    from_table: str
+    from_column: str
+    to_table: str
+    to_column: str
+    confidence: str
+    message: str
+    suggested_alternative: str | None = None
+
+
+@dataclass
 class ValidationResult:
     """Result of SQL validation."""
     valid: bool
@@ -113,6 +126,7 @@ class ValidationResult:
     limit_value: int | None = None
     phi_columns_found: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    join_warnings: list[JoinWarning] = field(default_factory=list)
 
 
 def _quick_keyword_check(sql: str) -> str | None:
@@ -358,6 +372,157 @@ def _has_aggregation(parsed: exp.Expression) -> bool:
     return False
 
 
+@dataclass
+class ExtractedJoin:
+    """A join extracted from SQL."""
+    left_table: str
+    left_column: str
+    right_table: str
+    right_column: str
+
+
+def _extract_joins(
+    parsed: exp.Expression,
+    table_aliases: dict[str, str],
+) -> list[ExtractedJoin]:
+    """
+    Extract all explicit joins from parsed SQL.
+
+    Looks for:
+    - JOIN ... ON table1.col = table2.col
+    - WHERE table1.col = table2.col (implicit joins)
+
+    Returns list of ExtractedJoin with resolved table names (not aliases).
+    """
+    joins: list[ExtractedJoin] = []
+
+    # Find explicit JOIN conditions
+    for join_expr in parsed.find_all(exp.Join):
+        on_clause = join_expr.args.get("on")
+        if on_clause:
+            _extract_eq_joins(on_clause, table_aliases, joins)
+
+    # Find implicit joins in WHERE clause
+    for select in parsed.find_all(exp.Select):
+        where_clause = select.args.get("where")
+        if where_clause:
+            _extract_eq_joins(where_clause.this, table_aliases, joins)
+
+    return joins
+
+
+def _extract_eq_joins(
+    expr: exp.Expression,
+    table_aliases: dict[str, str],
+    joins: list[ExtractedJoin],
+) -> None:
+    """
+    Extract equality conditions that look like joins.
+
+    Only captures table.col = table.col patterns where both sides
+    have explicit table references and different tables.
+    """
+    if isinstance(expr, exp.EQ):
+        left = expr.left
+        right = expr.right
+
+        # Both sides must be column references
+        if isinstance(left, exp.Column) and isinstance(right, exp.Column):
+            # Both must have table qualifiers
+            if left.table and right.table:
+                left_table = table_aliases.get(
+                    left.table.upper(), left.table.upper()
+                )
+                right_table = table_aliases.get(
+                    right.table.upper(), right.table.upper()
+                )
+
+                # Must be joining different tables
+                if left_table != right_table:
+                    joins.append(ExtractedJoin(
+                        left_table=left_table,
+                        left_column=left.name.lower(),
+                        right_table=right_table,
+                        right_column=right.name.lower(),
+                    ))
+
+    # Recurse into AND conditions
+    elif isinstance(expr, exp.And):
+        _extract_eq_joins(expr.left, table_aliases, joins)
+        _extract_eq_joins(expr.right, table_aliases, joins)
+
+
+def _validate_joins(
+    joins: list[ExtractedJoin],
+    catalog: "SchemaCatalog",
+) -> list[JoinWarning]:
+    """
+    Validate extracted joins against schema catalog.
+
+    Returns list of warnings for:
+    - Low confidence joins (heuristic)
+    - Joins with explicit warnings in schema (e.g., home_key_override)
+    - Unknown joins not in catalog
+    """
+    warnings: list[JoinWarning] = []
+
+    for join in joins:
+        validation = catalog.validate_join(
+            table_a=join.left_table,
+            column_a=join.left_column,
+            table_b=join.right_table,
+            column_b=join.right_column,
+        )
+
+        # Add warning for low confidence
+        if validation.confidence == "heuristic":
+            # Try to find a better alternative
+            best = catalog.get_best_join(join.left_table, join.right_table)
+            suggested = None
+            if best and best.total_score > 25:  # Better than heuristic
+                step = best.steps[0]
+                suggested = (
+                    f"{step.from_table}.{step.from_column} = "
+                    f"{step.to_table}.{step.to_column}"
+                )
+
+            warnings.append(JoinWarning(
+                from_table=join.left_table,
+                from_column=join.left_column,
+                to_table=join.right_table,
+                to_column=join.right_column,
+                confidence="heuristic",
+                message="Low confidence join - consider using a verified join path",
+                suggested_alternative=suggested,
+            ))
+
+        # Add warning for joins with explicit warnings in schema
+        for w in validation.warnings:
+            warnings.append(JoinWarning(
+                from_table=join.left_table,
+                from_column=join.left_column,
+                to_table=join.right_table,
+                to_column=join.right_column,
+                confidence=validation.confidence,
+                message=w,
+                suggested_alternative=None,
+            ))
+
+        # Warning for unknown joins
+        if not validation.valid:
+            warnings.append(JoinWarning(
+                from_table=join.left_table,
+                from_column=join.left_column,
+                to_table=join.right_table,
+                to_column=join.right_column,
+                confidence="unknown",
+                message="Join not found in schema catalog",
+                suggested_alternative=None,
+            ))
+
+    return warnings
+
+
 def _get_limit_value(parsed: exp.Expression) -> int | None:
     """Get LIMIT value if present."""
     for limit in parsed.find_all(exp.Limit):
@@ -374,7 +539,7 @@ def _get_limit_value(parsed: exp.Expression) -> int | None:
 
 def _check_phi_in_select(
     columns: dict[str, list[str]],
-    catalog: "Catalog | None" = None,
+    catalog: "SchemaCatalog | None" = None,
 ) -> tuple[str | None, list[str]]:
     """
     Check if any PHI columns are in the SELECT output.
@@ -428,9 +593,10 @@ def _check_select_star(columns: dict[str, list[str]]) -> str | None:
 
 def validate_sql(
     sql: str,
-    catalog: Catalog | None = None,
+    catalog: SchemaCatalog | None = None,
     max_rows: int = 2000,
     strict_catalog_check: bool = False,
+    validate_joins: bool = True,
 ) -> ValidationResult:
     """
     Validate SQL against all safety rules.
@@ -440,6 +606,7 @@ def validate_sql(
         catalog: Schema catalog for table/column validation
         max_rows: Maximum allowed LIMIT value
         strict_catalog_check: If True, require all tables/columns in catalog
+        validate_joins: If True, validate join confidence (requires catalog)
 
     Returns:
         ValidationResult with validation status and details
@@ -581,6 +748,40 @@ def validate_sql(
                 warnings=warnings,
             )
 
+    # Layer 8: Join validation (confidence and warnings)
+    join_warnings: list[JoinWarning] = []
+    if catalog and validate_joins:
+        extracted_joins = _extract_joins(parsed, table_aliases)
+        if extracted_joins:
+            join_warnings = _validate_joins(extracted_joins, catalog)
+            # Add readable warnings to the general warnings list (deduplicated)
+            seen_warnings: set[str] = set()
+            for jw in join_warnings:
+                join_key = f"{jw.from_table}.{jw.from_column}={jw.to_table}.{jw.to_column}"
+
+                if jw.confidence == "heuristic" and jw.message.startswith("Low confidence"):
+                    # Generic low-confidence warning
+                    msg = f"Low-confidence join: {jw.from_table}.{jw.from_column} = {jw.to_table}.{jw.to_column}"
+                    if jw.suggested_alternative:
+                        msg += f" (consider: {jw.suggested_alternative})"
+                    if msg not in seen_warnings:
+                        warnings.append(msg)
+                        seen_warnings.add(msg)
+                elif jw.confidence == "unknown":
+                    msg = (
+                        f"Unverified join: {jw.from_table}.{jw.from_column} = "
+                        f"{jw.to_table}.{jw.to_column}"
+                    )
+                    if msg not in seen_warnings:
+                        warnings.append(msg)
+                        seen_warnings.add(msg)
+                elif jw.message:
+                    # Schema-specific warning (home_key_override, etc.)
+                    msg = f"Join warning ({jw.from_table}.{jw.from_column}): {jw.message}"
+                    if msg not in seen_warnings:
+                        warnings.append(msg)
+                        seen_warnings.add(msg)
+
     # All checks passed
     return ValidationResult(
         valid=True,
@@ -591,14 +792,16 @@ def validate_sql(
         has_limit=limit_val is not None,
         limit_value=limit_val,
         warnings=warnings,
+        join_warnings=join_warnings,
     )
 
 
 def guard_sql(
     sql: str,
-    catalog: Catalog | None = None,
+    catalog: SchemaCatalog | None = None,
     max_rows: int = 2000,
     strict_catalog_check: bool = False,
+    validate_joins: bool = True,
 ) -> str:
     """
     Validate SQL and raise appropriate exception if invalid.
@@ -608,6 +811,7 @@ def guard_sql(
         catalog: Schema catalog for table/column validation
         max_rows: Maximum allowed LIMIT value
         strict_catalog_check: If True, require all tables/columns in catalog
+        validate_joins: If True, validate join confidence (requires catalog)
 
     Returns:
         The original SQL if valid
@@ -615,7 +819,7 @@ def guard_sql(
     Raises:
         SQLGuardError subclass if validation fails
     """
-    result = validate_sql(sql, catalog, max_rows, strict_catalog_check)
+    result = validate_sql(sql, catalog, max_rows, strict_catalog_check, validate_joins)
 
     if result.valid:
         return sql
@@ -639,9 +843,10 @@ def validate_with_catalog(
     sql: str,
     max_rows: int = 2000,
     strict: bool = True,
+    validate_joins: bool = True,
 ) -> ValidationResult:
     """
-    Validate SQL using the default catalog from schema directory.
+    Validate SQL using the enhanced schema catalog.
 
     This is a convenience function that loads the catalog automatically.
 
@@ -649,23 +854,29 @@ def validate_with_catalog(
         sql: SQL query to validate
         max_rows: Maximum allowed LIMIT value
         strict: If True, reject unknown tables/columns
+        validate_joins: If True, validate join confidence
 
     Returns:
         ValidationResult with validation status and details
     """
-    from app.catalog import get_catalog
+    from app.schema_catalog import get_schema_catalog
 
-    catalog = get_catalog()
-    return validate_sql(sql, catalog, max_rows, strict_catalog_check=strict)
+    catalog = get_schema_catalog()
+    return validate_sql(
+        sql, catalog, max_rows,
+        strict_catalog_check=strict,
+        validate_joins=validate_joins,
+    )
 
 
 def guard_with_catalog(
     sql: str,
     max_rows: int = 2000,
     strict: bool = True,
+    validate_joins: bool = True,
 ) -> str:
     """
-    Validate SQL using the default catalog, raising on errors.
+    Validate SQL using the enhanced schema catalog, raising on errors.
 
     This is a convenience function that loads the catalog automatically.
 
@@ -673,6 +884,7 @@ def guard_with_catalog(
         sql: SQL query to validate
         max_rows: Maximum allowed LIMIT value
         strict: If True, reject unknown tables/columns
+        validate_joins: If True, validate join confidence
 
     Returns:
         The original SQL if valid
@@ -680,7 +892,11 @@ def guard_with_catalog(
     Raises:
         SQLGuardError subclass if validation fails
     """
-    from app.catalog import get_catalog
+    from app.schema_catalog import get_schema_catalog
 
-    catalog = get_catalog()
-    return guard_sql(sql, catalog, max_rows, strict_catalog_check=strict)
+    catalog = get_schema_catalog()
+    return guard_sql(
+        sql, catalog, max_rows,
+        strict_catalog_check=strict,
+        validate_joins=validate_joins,
+    )

@@ -16,15 +16,6 @@ The bot:
 
 This repo currently starts from schema documentation (Mermaid ER diagrams). The next milestone is an end-to-end chat app.
 
----
-
-## Current State
-
-The project currently waiting for the table schema
-- `frequent_table.csv`: Table name and description
-- `detail_table.csv`: Detailed tables' columns 
-- join mapping file (in developing)
-
 
 ---
 
@@ -62,42 +53,17 @@ Three keys link data across the system:
 - `an` (Admission Number): inpatient admission identifier
 - `vn` (Visit Number): outpatient visit identifier
 
-### Table Families (by prefix)
-| Prefix | Domain | Examples |
-|--------|--------|----------|
-| PT | Patient core | PT, PTDIAG, PTICD9CM, PTOPRT, PTPHYSICALEXAM |
-| IPT | Inpatient | IPT, IPTINFANTMOTHER, IPTSUMDCT, IPTSUMDIAG, IPTSUMOPRT |
-| OVST | Outpatient visits | OVST, OVSTDISCHANGE, OVSTIST, OVSTOST, OVSTPRESS |
-| PRSC | Prescriptions | PRSC, PRSCDORD, PRSCDT, PRSCDTEXT, PRSCTYPEPT |
-| MED | Medications | MEDFORM, MEDGENERIC, MEDLBLHLP, MEDSALEHST, MEDSYMPTOM |
-| LAB | Laboratory | LABMEDICINE, LABORGANISM_ITA, LABORTYPE, LABSPCM |
-| BDVST | Blood bank | BDVST, BDVSTCSMT, BDVSTDT, BDVSTST, BDVSTTRANS |
-| DLVST | Delivery | DLVST, DLVSTAFBRTHSIGN, DLVSTDESC, DLVSTDT |
-| RM | Room/Ward | RM, RMLCT, RMLCTTYPE, RMTYPE, RMTYPEGRP |
+- `frequent_table.csv`: Table name and description
+- `frequent_column_enriched.csv`: Detailed tables' columns , PK, FK, relationship
 
-### Relationship Confidence
-- Solid lines in diagrams: High confidence (via universal keys hn/an/vn)
-- Dotted lines: Medium confidence (inferred within table family)
+Prefer joins with high confidence first:
+(... high:universal) and (... high:table match)
+Use fk_targets when you want “this column references what?”
+Use join_peers when you want “what can I join this column to?” (great for building join graphs)
+If join_warning is present, treat that edge as suspicious and prefer the “home key” interpretation.
 
-> NOTE: Claude must not “invent” tables/columns. Only use what exists in parsed catalog.
-
----
-
-## Key Patterns from Related Projects (Metabase_crawl)
-
-**Three-Schema DDL Pattern**:
-- `his_meta`: Metadata storage (dd_tables, dd_columns)
-- `his_raw`: Staging with TEXT columns + ingestion metadata
-- `his_curated`: Typed production tables
-
-**Type Inference Heuristics**:
-- `*_id`, `*_code`, `*_no` → INTEGER or VARCHAR
-- `*_date` → DATE or TIMESTAMP
-- `*_time` → TIME or TIMESTAMP
-- `*_stf`, `*staff*` → VARCHAR (staff identifiers)
-- `*_note`, `*_remark` → TEXT
-- `*_status`, `*_flag` → VARCHAR or BOOLEAN
-
+- `join_edges.csv`: join mapping file 
+= `relationships.md`: Table family 
 ---
 
 ## Product Spec: Chatbot Behavior
@@ -218,74 +184,7 @@ Three keys link data across the system:
 - **WebSocket**: Consider for real-time chat (optional, can use AJAX polling initially)
 - **Responsive**: Must work on tablets and desktops
 
----
 
-## Repository Conventions / Structure (Target)
-
-- `schema/`
-  - `frequent_table.csv`
-  - `detail_table.csv`
-  - `concepts.yaml` (clinical concept mappings)
-- `config/`
-  - `users.json` (username, hashed password, role)
-- `app/`
-  - `main.py` (FastAPI with routes)
-  - `auth.py` (login, session management, user role checks)
-  - `chat.py` (orchestrator)
-  - `catalog.py` (parse `.mmd` → catalog)
-  - `sql_gen.py`
-  - `sql_guard.py` (read-only + PHI guard + catalog grounding)
-  - `db.py`
-  - `validators.py` (sanity checks)
-  - `llm.py`
-  - `templates/`
-    - `login.html`
-    - `chat.html`
-    - `base.html`
-  - `static/`
-    - `css/space-theme.css`
-    - `js/chat.js`
-    - `js/stars-animation.js`
-- `tests/`
-  - `test_catalog_parse.py`
-  - `test_sql_guard.py`
-  - `test_concepts.py`
-  - `test_auth.py`
-- `out/`
-  - `catalog.json`
-  - `logs/`
-- `usr/`
-  - `ID.csv`
----
-
-## Environment Variables
-
-```bash
-# LLM
-ANTHROPIC_API_KEY=...
-
-# Database (read-only)
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
-
-# Optional granular DB vars
-DB_HOST=...
-DB_PORT=5432
-DB_NAME=...
-DB_USER=...
-DB_PASSWORD=...
-
-# Safety settings
-SQL_STATEMENT_TIMEOUT_MS=15000
-SQL_MAX_ROWS=2000
-
-# Authentication
-SECRET_KEY=your-secret-key-for-sessions-min-32-chars
-SESSION_COOKIE_NAME=kcmh_session
-SESSION_MAX_AGE=28800  # 8 hours in seconds
-USERS_FILE=config/users.json
-```
-
----
 
 ## Thai Language Context
 

@@ -75,7 +75,13 @@ class Database:
             conn.execute(f"SET statement_timeout = {timeout_ms}")
 
             with conn.cursor() as cur:
-                cur.execute(sql, params or {})
+                # If no params, escape % to avoid psycopg interpreting them as placeholders
+                # (e.g., LIKE '%dilantin%' has '%d' which looks like a format specifier)
+                if not params:
+                    escaped_sql = sql.replace("%", "%%")
+                    cur.execute(escaped_sql)
+                else:
+                    cur.execute(sql, params)
 
                 # Fetch max_rows + 1 to detect truncation
                 rows_raw = cur.fetchmany(max_rows + 1)

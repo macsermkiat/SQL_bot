@@ -97,8 +97,8 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
-    def catalog_path(self) -> Path:
-        return self.base_dir / "out" / "catalog.json"
+    def schema_knowledge_path(self) -> Path:
+        return self.base_dir / "out" / "schema_knowledge.json"
 
     @computed_field
     @property

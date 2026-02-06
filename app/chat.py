@@ -17,8 +17,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from app.catalog import Catalog, load_catalog
 from app.config import get_settings
+from app.schema_catalog import SchemaCatalog, get_schema_catalog
 from app.db import get_db
 from app.llm import get_llm_client
 from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult
@@ -35,15 +35,13 @@ class ChatOrchestrator:
 
     def __init__(self) -> None:
         self._settings = get_settings()
-        self._catalog: Catalog | None = None
+        self._catalog: SchemaCatalog | None = None
 
     @property
-    def catalog(self) -> Catalog | None:
-        """Lazy load catalog."""
+    def catalog(self) -> SchemaCatalog | None:
+        """Lazy load schema catalog."""
         if self._catalog is None:
-            catalog_path = self._settings.catalog_path
-            if catalog_path.exists():
-                self._catalog = load_catalog(catalog_path)
+            self._catalog = get_schema_catalog()
         return self._catalog
 
     async def handle_message(self, request: ChatRequest) -> ChatResponse:

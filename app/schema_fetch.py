@@ -1,8 +1,16 @@
 """
-Fetch complete schema from database and update catalog.
+DEPRECATED: This module uses the old catalog.json system.
 
-Run this script when connected to the database to get all tables/columns:
-    uv run python -m app.schema_fetch
+The application now uses CSV-based schema files:
+- schema/frequent_table.csv
+- schema/frequent_column_enriched.csv
+- schema/join_edges.csv
+
+These are parsed by app.schema_parser into out/schema_knowledge.json.
+
+This file is kept for reference but should not be used for new development.
+To update schema, edit the CSV files and run:
+    uv run python -c "from app.schema_parser import generate_schema_knowledge; generate_schema_knowledge()"
 """
 
 from __future__ import annotations

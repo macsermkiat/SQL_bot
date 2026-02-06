@@ -9,10 +9,10 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# Generate catalog if not exists
-if [ ! -f out/catalog.json ]; then
-    echo "Generating catalog from ER diagrams..."
-    uv run python -c "from app.catalog import generate_catalog; generate_catalog()"
+# Generate schema knowledge if not exists
+if [ ! -f out/schema_knowledge.json ]; then
+    echo "Generating schema knowledge from CSV files..."
+    uv run python -c "from app.schema_parser import generate_schema_knowledge; generate_schema_knowledge()"
 fi
 
 # Start the server

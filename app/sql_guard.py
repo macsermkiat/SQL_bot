@@ -40,8 +40,8 @@ FORBIDDEN_KEYWORDS: frozenset[str] = frozenset({
 PHI_COLUMNS: frozenset[str] = frozenset({
     # Patient identifiers
     "hn", "cid", "passport", "mrn", "national_id", "idcard", "pid",
-    # Names
-    "fname", "lname", "mname", "pname", "name", "fullname",
+    # Names (patient-specific - see REFERENCE_TABLES for exceptions)
+    "fname", "lname", "mname", "pname", "fullname",
     "firstname", "lastname", "middlename", "prename",
     # Contact info
     "phone", "mobile", "tel", "telephone", "email", "fax",
@@ -52,6 +52,32 @@ PHI_COLUMNS: frozenset[str] = frozenset({
     "dob", "birthdate", "birthday", "bdate",
     # Other quasi-identifiers
     "ssn", "social_security", "insurance_id", "member_id",
+})
+
+# Context-sensitive PHI columns (only PHI from certain tables)
+# These columns are PHI only when from patient-related tables
+CONTEXT_PHI_COLUMNS: dict[str, frozenset[str]] = {
+    "name": frozenset({"pt", "patient", "patients"}),
+    "fname": frozenset({"pt", "patient", "patients"}),
+    "lname": frozenset({"pt", "patient", "patients"}),
+    "fullname": frozenset({"pt", "patient", "patients"}),
+}
+# Note: DCT (doctor) names are NOT PHI - they are healthcare providers
+
+# Reference/lookup tables where "name" is NOT PHI (e.g., department names)
+REFERENCE_TABLES: frozenset[str] = frozenset({
+    # Clinical reference tables
+    "spclty", "specialty", "cliniclct", "clinic", "ward", "wards",
+    "dct", "doctor", "doctors", "icd10", "icd9cm", "icd10tm",
+    # Lab reference tables
+    "labexm", "labgrp", "labspcm", "labexm_cat",
+    # Medication reference tables
+    "meditemdis", "meditemphm", "medsymptom",
+    # Administrative reference tables
+    "pttype", "pttypeext", "nationality", "religion", "occupation",
+    "department", "dept", "unit", "province", "amphur", "tambon",
+    # Other lookup tables
+    "masterorder", "mastersale", "emrgncy",
 })
 
 
@@ -555,11 +581,25 @@ def _check_phi_in_select(
     phi_found: list[str] = []
 
     for table, cols in columns.items():
+        table_lower = table.lower() if table else ""
+        is_reference_table = table_lower in REFERENCE_TABLES
+
         for col in cols:
             col_lower = col.lower()
 
-            # Check hardcoded PHI list
+            # Check context-sensitive PHI columns (e.g., "name")
+            if col_lower in CONTEXT_PHI_COLUMNS:
+                # Only PHI if from patient tables, not reference tables
+                phi_tables = CONTEXT_PHI_COLUMNS[col_lower]
+                if table_lower in phi_tables and not is_reference_table:
+                    phi_found.append(f"{table}.{col}" if table != "_UNKNOWN_" else col)
+                continue
+
+            # Check hardcoded PHI list (skip for reference tables)
             if col_lower in PHI_COLUMNS:
+                # Reference tables can have "name" columns that aren't PHI
+                if is_reference_table and col_lower == "name":
+                    continue
                 phi_found.append(f"{table}.{col}" if table != "_UNKNOWN_" else col)
                 continue
 

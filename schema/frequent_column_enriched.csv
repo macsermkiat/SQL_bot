@@ -2667,3 +2667,5 @@ WARDICU,subdeptlct,numeric,type/Decimal,,0,,,0,,,[],
 WARDICU,deptlct,numeric,type/Decimal,,0,,,0,,,[],
 WARDICU,building,numeric,type/Decimal,,0,,,0,,,[],
 WARDICU,buildingname,varchar,type/Text,,0,,,0,,,[],
+SPCLTY,spclty,numeric,type/Decimal,รหัสภาควิชา/สาขา,1,,,0,,,[]
+SPCLTY,name,varchar,type/Text,ชื่อภาควิชา/สาขา,0,,,0,,,[]

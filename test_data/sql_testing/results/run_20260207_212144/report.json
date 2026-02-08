@@ -1,0 +1,69 @@
+{
+  "run_id": "20260207_212144",
+  "started_at": "2026-02-07T21:21:44.574163",
+  "completed_at": "2026-02-07T21:21:52.725604",
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "warned": 0,
+    "skipped": 0,
+    "pass_rate": 0.0,
+    "by_category": {},
+    "by_severity": {
+      "high": 1
+    },
+    "error_categories": {
+      "schema_error": 1
+    }
+  },
+  "results": [
+    {
+      "question_id": "Q046",
+      "overall_result": "FAIL",
+      "layers": {
+        "syntax": {
+          "passed": true,
+          "details": null,
+          "warnings": []
+        },
+        "safety": {
+          "passed": true,
+          "details": null,
+          "warnings": [
+            "Table 'SPCLTY' not found in catalog",
+            "Low-confidence join: IPTSUMOPRT.spclty = SPCLTY.spclty",
+            "Join warning (IPTSUMOPRT.spclty): Table SPCLTY not found",
+            "Unverified join: IPTSUMOPRT.spclty = SPCLTY.spclty"
+          ]
+        },
+        "schema": {
+          "passed": false,
+          "details": "Unknown tables: SPCLTY; Unknown columns: IPTSUMOPRT.spclty",
+          "warnings": []
+        }
+      },
+      "expected_behavior": "valid_sql",
+      "actual_behavior": "schema_error",
+      "behavior_match": false,
+      "tables_used": [
+        "IPTSUMOPRT",
+        "SPCLTY"
+      ],
+      "tables_expected": [
+        "PTICD9CM",
+        "CLINICLCT"
+      ],
+      "tables_match": false,
+      "concepts_used": [],
+      "concepts_expected": [],
+      "concepts_match": false,
+      "warnings": [],
+      "suggestions": [],
+      "severity": "high",
+      "error_category": "schema_error"
+    }
+  ],
+  "patches": [],
+  "recommendations": []
+}

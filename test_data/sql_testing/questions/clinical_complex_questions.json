@@ -1,0 +1,669 @@
+[
+  {
+    "id": "CQ001",
+    "text": "How many patients taking phenytoin (Dilantin) were diagnosed with hepatitis last year?",
+    "text_thai": "จำนวนผู้ป่วยที่ได้รับยา phenytoin (Dilantin) และได้รับการวินิจฉัยว่าเป็นโรคตับอักเสบในปีที่แล้ว",
+    "difficulty": "hard",
+    "category": "drug_disease",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "ICD10"],
+    "clinical_context": {
+      "drug": "Phenytoin/Dilantin",
+      "drug_search": ["phenytoin", "dilantin"],
+      "disease": "Hepatitis",
+      "icd10_range": "B15-B19"
+    },
+    "notes": "Requires joining prescriptions to diagnoses via hn, filtering by drug name and ICD-10 range"
+  },
+  {
+    "id": "CQ002",
+    "text": "Count patients on atorvastatin who still have LDL over 190 mg/dL in their most recent lab test",
+    "text_thai": "นับจำนวนผู้ป่วยที่ได้รับยา atorvastatin แต่ยังมีค่า LDL สูงกว่า 190 mg/dL จากผลตรวจล่าสุด",
+    "difficulty": "hard",
+    "category": "drug_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Atorvastatin",
+      "drug_search": ["atorvastatin", "lipitor"],
+      "lab_test": "LDL",
+      "threshold": "> 190"
+    },
+    "notes": "Requires finding most recent LDL per patient, checking threshold, and matching with atorvastatin prescriptions"
+  },
+  {
+    "id": "CQ003",
+    "text": "How many patients underwent craniotomy with a diagnosis of meningioma last year?",
+    "text_thai": "จำนวนผู้ป่วยที่ได้รับการผ่าตัดเปิดกะโหลกศีรษะ (craniotomy) โดยมีการวินิจฉัยว่าเป็น meningioma ในปีที่แล้ว",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "ICD9CM", "IPTSUMDIAG", "ICD10", "IPT"],
+    "clinical_context": {
+      "procedure": "Craniotomy",
+      "icd9cm_code": "01.24",
+      "diagnosis": "Meningioma",
+      "icd10_code": "D32"
+    },
+    "notes": "Requires joining IPD procedures to IPD diagnoses via an, filtering by ICD-9-CM and ICD-10 codes"
+  },
+  {
+    "id": "CQ004",
+    "text": "Find patients on warfarin with INR above 4.0 in the past 3 months",
+    "text_thai": "หาจำนวนผู้ป่วยที่ได้รับยา warfarin และมีค่า INR สูงกว่า 4.0 ในช่วง 3 เดือนที่ผ่านมา",
+    "difficulty": "hard",
+    "category": "drug_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Warfarin",
+      "drug_search": ["warfarin", "coumadin"],
+      "lab_test": "INR",
+      "threshold": "> 4.0"
+    },
+    "notes": "High INR indicates bleeding risk - critical safety monitoring"
+  },
+  {
+    "id": "CQ005",
+    "text": "Count diabetic patients on metformin whose HbA1c is still above 9% in their last test",
+    "text_thai": "นับจำนวนผู้ป่วยเบาหวานที่ได้รับยา metformin แต่ยังมีค่า HbA1c สูงกว่า 9% จากผลตรวจครั้งล่าสุด",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Metformin",
+      "disease": "Diabetes",
+      "icd10_range": "E10-E14",
+      "lab_test": "HbA1c",
+      "threshold": "> 9"
+    },
+    "notes": "Triple join: drug + diagnosis + lab result - identifies poorly controlled diabetics"
+  },
+  {
+    "id": "CQ006",
+    "text": "How many CABG surgeries were performed on patients with diabetes and hypertension last year?",
+    "text_thai": "จำนวนการผ่าตัดบายพาสหัวใจ (CABG) ในผู้ป่วยที่มีเบาหวานและความดันโลหิตสูงในปีที่แล้ว",
+    "difficulty": "hard",
+    "category": "procedure_multi_diagnosis",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "procedure": "CABG",
+      "icd9cm_range": "36.1",
+      "diagnoses": ["Diabetes E10-E14", "Hypertension I10-I15"]
+    },
+    "notes": "Patient must have BOTH conditions - requires self-join on diagnoses"
+  },
+  {
+    "id": "CQ007",
+    "text": "Find patients taking amiodarone who developed thyroid dysfunction (TSH abnormal)",
+    "text_thai": "หาจำนวนผู้ป่วยที่ได้รับยา amiodarone และมีความผิดปกติของไทรอยด์ (TSH ผิดปกติ)",
+    "difficulty": "hard",
+    "category": "drug_lab_adverse",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Amiodarone",
+      "drug_search": ["amiodarone", "cordarone"],
+      "lab_test": "TSH",
+      "adverse_effect": "Thyroid dysfunction"
+    },
+    "notes": "Amiodarone commonly causes thyroid problems - drug safety monitoring"
+  },
+  {
+    "id": "CQ008",
+    "text": "Count patients who had cholecystectomy with acute cholecystitis diagnosis",
+    "text_thai": "นับจำนวนผู้ป่วยที่ได้รับการผ่าตัดถุงน้ำดี (cholecystectomy) โดยมีการวินิจฉัยถุงน้ำดีอักเสบเฉียบพลัน",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "procedure": "Cholecystectomy",
+      "icd9cm_code": "51.22-51.23",
+      "diagnosis": "Acute cholecystitis",
+      "icd10_code": "K81.0"
+    },
+    "notes": "Common surgical procedure with matching diagnosis"
+  },
+  {
+    "id": "CQ009",
+    "text": "How many epilepsy patients on carbamazepine have low sodium (Na < 130)?",
+    "text_thai": "จำนวนผู้ป่วยโรคลมชักที่ได้รับยา carbamazepine และมีค่าโซเดียมต่ำ (< 130)",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Carbamazepine",
+      "drug_search": ["carbamazepine", "tegretol"],
+      "disease": "Epilepsy",
+      "icd10_range": "G40-G41",
+      "lab_test": "Sodium/Na",
+      "threshold": "< 130"
+    },
+    "notes": "SIADH is a known side effect of carbamazepine"
+  },
+  {
+    "id": "CQ010",
+    "text": "Find patients on methotrexate who have elevated liver enzymes (ALT > 3x ULN)",
+    "text_thai": "หาจำนวนผู้ป่วยที่ได้รับยา methotrexate และมีค่าเอนไซม์ตับสูง (ALT สูงกว่า 3 เท่าของค่าปกติ)",
+    "difficulty": "hard",
+    "category": "drug_lab_adverse",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Methotrexate",
+      "lab_test": "ALT",
+      "threshold": "> 120"
+    },
+    "notes": "Methotrexate hepatotoxicity monitoring - ALT ULN ~40, so 3x = 120"
+  },
+  {
+    "id": "CQ011",
+    "text": "Count hip replacement surgeries in patients over 70 with osteoarthritis",
+    "text_thai": "นับจำนวนการผ่าตัดเปลี่ยนข้อสะโพกในผู้ป่วยอายุมากกว่า 70 ปีที่มีโรคข้อเสื่อม",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis_demographic",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT", "OVST"],
+    "clinical_context": {
+      "procedure": "Hip replacement",
+      "icd9cm_code": "81.51-81.52",
+      "diagnosis": "Osteoarthritis",
+      "icd10_code": "M16",
+      "age_filter": "> 70"
+    },
+    "notes": "Requires age calculation from IPT or joining to patient demographics"
+  },
+  {
+    "id": "CQ012",
+    "text": "How many patients on aspirin and clopidogrel had GI bleeding?",
+    "text_thai": "จำนวนผู้ป่วยที่ได้รับยา aspirin และ clopidogrel พร้อมกัน และมีเลือดออกในทางเดินอาหาร",
+    "difficulty": "hard",
+    "category": "multi_drug_adverse",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG"],
+    "clinical_context": {
+      "drugs": ["aspirin", "clopidogrel/plavix"],
+      "adverse_event": "GI bleeding",
+      "icd10_range": "K92.0-K92.2"
+    },
+    "notes": "Dual antiplatelet therapy increases GI bleeding risk"
+  },
+  {
+    "id": "CQ013",
+    "text": "Find breast cancer patients who received mastectomy and had positive estrogen receptor (ER+)",
+    "text_thai": "หาจำนวนผู้ป่วยมะเร็งเต้านมที่ได้รับการผ่าตัดเต้านมและมีผลตรวจ estrogen receptor เป็นบวก",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "procedure": "Mastectomy",
+      "icd9cm_range": "85.41-85.48",
+      "diagnosis": "Breast cancer",
+      "icd10_code": "C50",
+      "lab_test": "Estrogen receptor"
+    },
+    "notes": "ER status determines hormonal therapy eligibility"
+  },
+  {
+    "id": "CQ014",
+    "text": "Count CKD patients on ACE inhibitors with potassium above 5.5",
+    "text_thai": "นับจำนวนผู้ป่วยโรคไตเรื้อรังที่ได้รับยา ACE inhibitor และมีค่าโปแตสเซียมสูงกว่า 5.5",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug_class": "ACE inhibitors",
+      "drug_search": ["enalapril", "lisinopril", "ramipril", "captopril"],
+      "disease": "CKD",
+      "icd10_range": "N18",
+      "lab_test": "Potassium/K",
+      "threshold": "> 5.5"
+    },
+    "notes": "Hyperkalemia risk with ACE inhibitors in CKD - critical monitoring"
+  },
+  {
+    "id": "CQ015",
+    "text": "How many appendectomies were performed emergently vs electively last year?",
+    "text_thai": "จำนวนการผ่าตัดไส้ติ่งแบบฉุกเฉินเทียบกับแบบนัดหมายในปีที่แล้ว",
+    "difficulty": "hard",
+    "category": "procedure_classification",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPT", "OPREQVST"],
+    "clinical_context": {
+      "procedure": "Appendectomy",
+      "icd9cm_code": "47.0",
+      "classification": "Emergency vs Elective"
+    },
+    "notes": "Requires distinguishing emergency from scheduled surgeries"
+  },
+  {
+    "id": "CQ016",
+    "text": "Find heart failure patients on furosemide whose creatinine increased by more than 50%",
+    "text_thai": "หาจำนวนผู้ป่วยหัวใจล้มเหลวที่ได้รับยา furosemide และมีค่า creatinine เพิ่มขึ้นมากกว่า 50%",
+    "difficulty": "hard",
+    "category": "drug_disease_lab_trend",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Furosemide",
+      "drug_search": ["furosemide", "lasix"],
+      "disease": "Heart failure",
+      "icd10_range": "I50",
+      "lab_test": "Creatinine",
+      "trend": "50% increase"
+    },
+    "notes": "Cardiorenal syndrome monitoring - requires comparing sequential lab values"
+  },
+  {
+    "id": "CQ017",
+    "text": "Count patients who had PCI (percutaneous coronary intervention) with STEMI diagnosis",
+    "text_thai": "นับจำนวนผู้ป่วยที่ได้รับการทำ PCI และมีการวินิจฉัย STEMI",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "procedure": "PCI",
+      "icd9cm_range": "36.06-36.07",
+      "diagnosis": "STEMI",
+      "icd10_code": "I21"
+    },
+    "notes": "Primary PCI is standard treatment for STEMI"
+  },
+  {
+    "id": "CQ018",
+    "text": "How many schizophrenia patients on clozapine have low WBC count?",
+    "text_thai": "จำนวนผู้ป่วยจิตเภทที่ได้รับยา clozapine และมีเม็ดเลือดขาวต่ำ",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Clozapine",
+      "drug_search": ["clozapine", "clozaril"],
+      "disease": "Schizophrenia",
+      "icd10_range": "F20",
+      "lab_test": "WBC",
+      "threshold": "< 3000"
+    },
+    "notes": "Clozapine requires WBC monitoring due to agranulocytosis risk"
+  },
+  {
+    "id": "CQ019",
+    "text": "Find pneumonia patients who received mechanical ventilation and had positive blood culture",
+    "text_thai": "หาจำนวนผู้ป่วยปอดอักเสบที่ได้รับการใส่เครื่องช่วยหายใจและมีผลเพาะเชื้อในเลือดเป็นบวก",
+    "difficulty": "hard",
+    "category": "diagnosis_procedure_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMDIAG", "IPTSUMOPRT", "IPT", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "diagnosis": "Pneumonia",
+      "icd10_range": "J12-J18",
+      "procedure": "Mechanical ventilation",
+      "icd9cm_code": "96.7",
+      "lab_test": "Blood culture positive"
+    },
+    "notes": "Severe pneumonia requiring ICU care"
+  },
+  {
+    "id": "CQ020",
+    "text": "Count patients on insulin with recurrent hypoglycemia episodes (glucose < 70)",
+    "text_thai": "นับจำนวนผู้ป่วยที่ได้รับยาอินซูลินและมีภาวะน้ำตาลต่ำซ้ำๆ (glucose < 70)",
+    "difficulty": "hard",
+    "category": "drug_lab_recurrent",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Insulin",
+      "drug_search": ["insulin", "novorapid", "lantus", "humalog"],
+      "lab_test": "Glucose",
+      "threshold": "< 70",
+      "recurrence": ">= 2 episodes"
+    },
+    "notes": "Recurrent hypoglycemia indicates need for insulin dose adjustment"
+  },
+  {
+    "id": "CQ021",
+    "text": "How many liver cirrhosis patients on spironolactone have hyponatremia?",
+    "text_thai": "จำนวนผู้ป่วยตับแข็งที่ได้รับยา spironolactone และมีภาวะโซเดียมต่ำ",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Spironolactone",
+      "drug_search": ["spironolactone", "aldactone"],
+      "disease": "Liver cirrhosis",
+      "icd10_range": "K74",
+      "lab_test": "Sodium",
+      "threshold": "< 130"
+    },
+    "notes": "Spironolactone used for ascites but can cause electrolyte imbalances"
+  },
+  {
+    "id": "CQ022",
+    "text": "Find patients who had knee replacement with both osteoarthritis and obesity diagnoses",
+    "text_thai": "หาจำนวนผู้ป่วยที่ได้รับการผ่าตัดเปลี่ยนข้อเข่าโดยมีทั้งโรคข้อเสื่อมและโรคอ้วน",
+    "difficulty": "hard",
+    "category": "procedure_multi_diagnosis",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "procedure": "Knee replacement",
+      "icd9cm_code": "81.54",
+      "diagnoses": ["Osteoarthritis M17", "Obesity E66"]
+    },
+    "notes": "Obesity is a risk factor and complication for knee surgery"
+  },
+  {
+    "id": "CQ023",
+    "text": "Count stroke patients on anticoagulants who had intracranial hemorrhage",
+    "text_thai": "นับจำนวนผู้ป่วยโรคหลอดเลือดสมองที่ได้รับยาต้านการแข็งตัวของเลือดและมีเลือดออกในสมอง",
+    "difficulty": "hard",
+    "category": "drug_disease_adverse",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG"],
+    "clinical_context": {
+      "drugs": ["warfarin", "rivaroxaban", "dabigatran", "apixaban"],
+      "disease": "Stroke",
+      "icd10_range": "I60-I69",
+      "adverse_event": "Intracranial hemorrhage",
+      "icd10_adverse": "I60-I62"
+    },
+    "notes": "Major bleeding complication of anticoagulation"
+  },
+  {
+    "id": "CQ024",
+    "text": "How many thyroidectomies were done for thyroid cancer vs benign disease?",
+    "text_thai": "จำนวนการผ่าตัดต่อมไทรอยด์สำหรับมะเร็งเทียบกับโรคที่ไม่ใช่มะเร็ง",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis_comparison",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "procedure": "Thyroidectomy",
+      "icd9cm_range": "06.2-06.5",
+      "malignant": "Thyroid cancer C73",
+      "benign": "Thyroid nodule E04, Goiter E01"
+    },
+    "notes": "Compare cancer vs benign indications for surgery"
+  },
+  {
+    "id": "CQ025",
+    "text": "Find HIV patients on antiretroviral therapy with viral load still detectable",
+    "text_thai": "หาจำนวนผู้ป่วย HIV ที่ได้รับยาต้านไวรัสแต่ยังตรวจพบ viral load",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug_class": "Antiretrovirals",
+      "drug_search": ["efavirenz", "tenofovir", "lamivudine", "lopinavir"],
+      "disease": "HIV",
+      "icd10_code": "B20-B24",
+      "lab_test": "HIV viral load",
+      "threshold": "> 50 copies/mL"
+    },
+    "notes": "Treatment failure or non-adherence detection"
+  },
+  {
+    "id": "CQ026",
+    "text": "Count anemia patients on erythropoietin whose hemoglobin improved above 10",
+    "text_thai": "นับจำนวนผู้ป่วยโลหิตจางที่ได้รับยา erythropoietin และมีค่า hemoglobin ดีขึ้นเกิน 10",
+    "difficulty": "hard",
+    "category": "drug_disease_lab_improvement",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Erythropoietin",
+      "drug_search": ["erythropoietin", "epo", "epoetin", "darbepoetin"],
+      "disease": "Anemia",
+      "icd10_range": "D50-D64",
+      "lab_test": "Hemoglobin",
+      "target": "> 10"
+    },
+    "notes": "Treatment response monitoring - compare before/after Hb"
+  },
+  {
+    "id": "CQ027",
+    "text": "How many gout patients on allopurinol achieved target uric acid below 6?",
+    "text_thai": "จำนวนผู้ป่วยโรคเกาต์ที่ได้รับยา allopurinol และมีค่ากรดยูริกต่ำกว่า 6",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Allopurinol",
+      "disease": "Gout",
+      "icd10_code": "M10",
+      "lab_test": "Uric acid",
+      "target": "< 6"
+    },
+    "notes": "Treatment goal for gout is uric acid < 6 mg/dL"
+  },
+  {
+    "id": "CQ028",
+    "text": "Find patients with atrial fibrillation on digoxin who have bradycardia or low potassium",
+    "text_thai": "หาจำนวนผู้ป่วย AF ที่ได้รับยา digoxin และมี bradycardia หรือโปแตสเซียมต่ำ",
+    "difficulty": "hard",
+    "category": "drug_disease_multi_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Digoxin",
+      "drug_search": ["digoxin", "lanoxin"],
+      "disease": "Atrial fibrillation",
+      "icd10_code": "I48",
+      "labs": ["Potassium < 3.5", "HR < 60"]
+    },
+    "notes": "Digoxin toxicity risk factors"
+  },
+  {
+    "id": "CQ029",
+    "text": "Count colectomies performed for colorectal cancer with lymph node involvement",
+    "text_thai": "นับจำนวนการผ่าตัดลำไส้ใหญ่สำหรับมะเร็งลำไส้ที่มีการแพร่กระจายไปต่อมน้ำเหลือง",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis_staging",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "procedure": "Colectomy",
+      "icd9cm_range": "45.7-45.8",
+      "diagnosis": "Colorectal cancer",
+      "icd10_code": "C18-C20",
+      "staging": "Lymph node involvement"
+    },
+    "notes": "Staging affects prognosis and treatment decisions"
+  },
+  {
+    "id": "CQ030",
+    "text": "How many rheumatoid arthritis patients on biologics developed infections?",
+    "text_thai": "จำนวนผู้ป่วยรูมาตอยด์ที่ได้รับยาชีวภาพและเกิดการติดเชื้อ",
+    "difficulty": "hard",
+    "category": "drug_disease_adverse",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG"],
+    "clinical_context": {
+      "drug_class": "Biologics",
+      "drug_search": ["adalimumab", "etanercept", "infliximab", "tocilizumab"],
+      "disease": "Rheumatoid arthritis",
+      "icd10_code": "M05-M06",
+      "adverse_event": "Infections",
+      "icd10_adverse": "A00-B99"
+    },
+    "notes": "Biologics increase infection risk - safety monitoring"
+  },
+  {
+    "id": "CQ031",
+    "text": "Find leukemia patients who received chemotherapy and developed neutropenia",
+    "text_thai": "หาจำนวนผู้ป่วยมะเร็งเม็ดเลือดขาวที่ได้รับเคมีบำบัดและมีเม็ดเลือดขาวต่ำ",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug_class": "Chemotherapy",
+      "disease": "Leukemia",
+      "icd10_range": "C91-C95",
+      "lab_test": "ANC/Neutrophils",
+      "threshold": "< 500"
+    },
+    "notes": "Febrile neutropenia is a chemotherapy emergency"
+  },
+  {
+    "id": "CQ032",
+    "text": "Count Parkinson's patients on levodopa whose symptoms progressed (motor fluctuations)",
+    "text_thai": "นับจำนวนผู้ป่วยพาร์กินสันที่ได้รับยา levodopa และมีอาการแย่ลง",
+    "difficulty": "hard",
+    "category": "drug_disease_progression",
+    "expected_behavior": "needs_clarification",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG"],
+    "clinical_context": {
+      "drug": "Levodopa",
+      "drug_search": ["levodopa", "sinemet", "madopar"],
+      "disease": "Parkinson's disease",
+      "icd10_code": "G20"
+    },
+    "notes": "Motor fluctuations not easily captured in structured data - may need clarification"
+  },
+  {
+    "id": "CQ033",
+    "text": "How many prostatectomies were performed for prostate cancer with PSA above 20?",
+    "text_thai": "จำนวนการผ่าตัดต่อมลูกหมากสำหรับมะเร็งต่อมลูกหมากที่มี PSA สูงกว่า 20",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "procedure": "Prostatectomy",
+      "icd9cm_code": "60.5",
+      "diagnosis": "Prostate cancer",
+      "icd10_code": "C61",
+      "lab_test": "PSA",
+      "threshold": "> 20"
+    },
+    "notes": "High PSA indicates high-risk disease"
+  },
+  {
+    "id": "CQ034",
+    "text": "Find hypertensive patients on 3+ antihypertensive drugs whose BP is still uncontrolled",
+    "text_thai": "หาจำนวนผู้ป่วยความดันสูงที่ได้รับยาลดความดัน 3 ชนิดขึ้นไปแต่ยังควบคุมไม่ได้",
+    "difficulty": "hard",
+    "category": "multi_drug_disease_outcome",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "OVSTPRESS"],
+    "clinical_context": {
+      "drug_class": "Antihypertensives",
+      "drug_count": ">= 3",
+      "disease": "Hypertension",
+      "icd10_range": "I10-I15",
+      "outcome": "BP > 140/90"
+    },
+    "notes": "Resistant hypertension definition - on 3+ drugs with uncontrolled BP"
+  },
+  {
+    "id": "CQ035",
+    "text": "Count cesarean sections with preeclampsia vs without",
+    "text_thai": "นับจำนวนการผ่าคลอดในผู้ป่วยที่มีครรภ์เป็นพิษเทียบกับไม่มี",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis_comparison",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT", "DLVST"],
+    "clinical_context": {
+      "procedure": "Cesarean section",
+      "icd9cm_code": "74.0-74.4",
+      "diagnosis": "Preeclampsia",
+      "icd10_code": "O14"
+    },
+    "notes": "Preeclampsia often requires urgent delivery"
+  },
+  {
+    "id": "CQ036",
+    "text": "How many asthma patients on inhaled steroids were admitted for exacerbation?",
+    "text_thai": "จำนวนผู้ป่วยหอบหืดที่ได้รับยาสเตียรอยด์ชนิดพ่นและถูกแอดมิตเนื่องจากอาการกำเริบ",
+    "difficulty": "hard",
+    "category": "drug_disease_admission",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "drug_class": "Inhaled steroids",
+      "drug_search": ["budesonide", "fluticasone", "beclomethasone"],
+      "disease": "Asthma",
+      "icd10_code": "J45",
+      "outcome": "Admission for exacerbation J46"
+    },
+    "notes": "Asthma exacerbation despite controller therapy"
+  },
+  {
+    "id": "CQ037",
+    "text": "Find patients on lithium with therapeutic drug level monitoring",
+    "text_thai": "หาจำนวนผู้ป่วยที่ได้รับยา lithium และมีการตรวจระดับยาในเลือด",
+    "difficulty": "hard",
+    "category": "drug_lab_monitoring",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Lithium",
+      "lab_test": "Lithium level",
+      "therapeutic_range": "0.6-1.2 mEq/L"
+    },
+    "notes": "Lithium requires regular TDM due to narrow therapeutic index"
+  },
+  {
+    "id": "CQ038",
+    "text": "Count patients who had coronary angiography with significant CAD findings",
+    "text_thai": "นับจำนวนผู้ป่วยที่ได้รับการสวนหัวใจและพบการตีบของหลอดเลือดหัวใจอย่างมีนัยสำคัญ",
+    "difficulty": "hard",
+    "category": "procedure_diagnosis",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["IPTSUMOPRT", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "procedure": "Coronary angiography",
+      "icd9cm_code": "88.55-88.57",
+      "diagnosis": "Coronary artery disease",
+      "icd10_code": "I25"
+    },
+    "notes": "Diagnostic angiography with positive findings"
+  },
+  {
+    "id": "CQ039",
+    "text": "How many transplant patients on tacrolimus had nephrotoxicity?",
+    "text_thai": "จำนวนผู้ป่วยปลูกถ่ายอวัยวะที่ได้รับยา tacrolimus และมีพิษต่อไต",
+    "difficulty": "hard",
+    "category": "drug_disease_lab",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "LVSTEXM", "LABEXM"],
+    "clinical_context": {
+      "drug": "Tacrolimus",
+      "drug_search": ["tacrolimus", "prograf"],
+      "disease": "Transplant",
+      "icd10_range": "Z94",
+      "adverse": "Nephrotoxicity",
+      "lab_test": "Creatinine increase"
+    },
+    "notes": "Tacrolimus nephrotoxicity is dose-dependent"
+  },
+  {
+    "id": "CQ040",
+    "text": "Find COPD patients on triple therapy (ICS+LABA+LAMA) who still had exacerbations",
+    "text_thai": "หาจำนวนผู้ป่วย COPD ที่ได้รับยา triple therapy แต่ยังมีอาการกำเริบ",
+    "difficulty": "hard",
+    "category": "multi_drug_disease_outcome",
+    "expected_behavior": "valid_sql",
+    "expected_tables": ["PRSCDT", "MEDITEMDIS", "PRSC", "PTDIAG", "IPTSUMDIAG", "IPT"],
+    "clinical_context": {
+      "drug_combo": ["ICS", "LABA", "LAMA"],
+      "drug_search": ["fluticasone", "salmeterol", "tiotropium", "formoterol", "glycopyrronium"],
+      "disease": "COPD",
+      "icd10_code": "J44",
+      "outcome": "Exacerbation requiring admission"
+    },
+    "notes": "Triple therapy failure - may need escalation"
+  }
+]

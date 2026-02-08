@@ -1,0 +1,58 @@
+{
+  "run_id": "20260207_212032",
+  "started_at": "2026-02-07T21:20:32.955325",
+  "completed_at": "2026-02-07T21:20:41.391874",
+  "summary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "warned": 0,
+    "skipped": 0,
+    "pass_rate": 0.0,
+    "by_category": {},
+    "by_severity": {
+      "critical": 1
+    },
+    "error_categories": {
+      "safety_violation": 1
+    }
+  },
+  "results": [
+    {
+      "question_id": "Q046",
+      "overall_result": "FAIL",
+      "layers": {
+        "syntax": {
+          "passed": true,
+          "details": null,
+          "warnings": []
+        },
+        "safety": {
+          "passed": false,
+          "details": "PHI column(s) cannot be included in SELECT output: SPCLTY.name",
+          "warnings": [
+            "Error type: PHIExposureError"
+          ]
+        }
+      },
+      "expected_behavior": "valid_sql",
+      "actual_behavior": "reject_phi",
+      "behavior_match": false,
+      "tables_used": [],
+      "tables_expected": [
+        "PTICD9CM",
+        "CLINICLCT"
+      ],
+      "tables_match": false,
+      "concepts_used": [],
+      "concepts_expected": [],
+      "concepts_match": false,
+      "warnings": [],
+      "suggestions": [],
+      "severity": "critical",
+      "error_category": "safety_violation"
+    }
+  ],
+  "patches": [],
+  "recommendations": []
+}

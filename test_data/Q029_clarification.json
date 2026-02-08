@@ -1,0 +1,109 @@
+{
+  "question": "Average wait time in OPD",
+  "needs_clarification": true,
+  "reason": "The schema lacks explicit wait time tracking columns in the OVST (Outpatient Visit) table",
+  "analysis": {
+    "available_time_fields_in_OVST": [
+      {
+        "column": "vstdate",
+        "type": "timestamp",
+        "thai_label": "วันที่ส่งตรวจ",
+        "translation": "Date of visit/examination",
+        "notes": "Records the date patient was examined"
+      },
+      {
+        "column": "vsttime",
+        "type": "numeric",
+        "thai_label": "เวลาส่งตรวจ",
+        "translation": "Time of visit/examination",
+        "notes": "Records the time patient was examined (likely end time)"
+      },
+      {
+        "column": "overtime",
+        "type": "numeric",
+        "thai_label": "นอกเวลา",
+        "translation": "Out of hours (flag)",
+        "notes": "Binary flag indicating if visit was outside normal hours"
+      }
+    ],
+    "related_tables_with_time_data": [
+      {
+        "table": "CNER",
+        "columns": ["triagedate", "triagetime"],
+        "description": "Emergency triage - has explicit triage date/time",
+        "relevance": "Not OPD specific - for ER visits"
+      },
+      {
+        "table": "OPDDCTORDER",
+        "columns": ["waitdate", "waitchk", "waitreason"],
+        "description": "Doctor order tracking with wait status",
+        "relevance": "May track wait time for orders, not initial visit wait"
+      }
+    ],
+    "missing_data_for_wait_time_calculation": [
+      "Registration/check-in time (arrival time)",
+      "Triage time (initial assessment)",
+      "Queue wait start time",
+      "Doctor consultation start time",
+      "Patient departure time"
+    ]
+  },
+  "clarification_options": [
+    {
+      "option": 1,
+      "interpretation": "Time from first visit record to examination completion",
+      "calculation": "Requires: registration_time (MISSING) vs vsttime (available)",
+      "feasibility": "NOT POSSIBLE - no registration/arrival time recorded in OVST"
+    },
+    {
+      "option": 2,
+      "interpretation": "Implied waiting time from appointment to actual visit",
+      "calculation": "OVST.vsttime - OVST.nexttime (if patient had previous appointment)",
+      "feasibility": "PARTIAL - only works for scheduled follow-ups, data quality unclear",
+      "complexity": "Would need: previous visit nexttime + current visit vsttime"
+    },
+    {
+      "option": 3,
+      "interpretation": "Average time between visits",
+      "calculation": "Lead(vstdate) - vstdate for same patient",
+      "feasibility": "POSSIBLE - can calculate interval between consecutive visits",
+      "notes": "This is visit interval, not wait time"
+    },
+    {
+      "option": 4,
+      "interpretation": "Wait time for doctor orders (post-visit)",
+      "calculation": "Use OPDDCTORDER.waitdate and wait status codes",
+      "feasibility": "POSSIBLE - but this is post-visit wait, not initial OPD wait"
+    },
+    {
+      "option": 5,
+      "interpretation": "Operational queue metrics",
+      "calculation": "Count visits per time slot, derive queue depth",
+      "feasibility": "POSSIBLE but requires assumptions about how vsttime is recorded",
+      "notes": "Would need to understand if vsttime is check-in, triage, or examination time"
+    }
+  ],
+  "clarification_questions": [
+    "How is 'wait time' defined in your context? Please specify which timestamps represent:",
+    "  (a) Patient arrival/check-in time",
+    "  (b) Triage/initial assessment time",
+    "  (c) Doctor consultation start time",
+    "  (d) Doctor consultation end time (examination completion)",
+    "",
+    "Which OVST columns represent which events?",
+    "  - Is vsttime the time patient first arrived, or time of examination?",
+    "  - Does overtime flag indicate after-hours visit type only?",
+    "",
+    "Do you have access to registration logs or appointment system?",
+    "  - OVST.nexttime (from previous appointment) vs current vsttime could estimate wait",
+    "  - But this only works if vsttime > nexttime (actual visit vs scheduled)",
+    "",
+    "Would you accept an alternative metric?",
+    "  - Time from appointment to visit completion?",
+    "  - Average visits per time slot (queue depth)?",
+    "  - Distribution of visit times by clinic?"
+  ],
+  "confidence": "low",
+  "sql_possible": false,
+  "suggested_next_step": "Please provide clarification on how wait time should be calculated from the available OVST fields"
+}

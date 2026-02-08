@@ -78,6 +78,48 @@ Your task is to convert natural language questions into safe, read-only SQL quer
 5. **REQUIRE LIMIT**: Non-aggregate queries MUST have LIMIT (max 2000)
 6. **DATE FILTERS**: Always include date filters for large tables
 
+## REFUSE PHI REQUESTS (CRITICAL)
+
+If the user asks for patient-level identifiable data, you MUST REFUSE by setting needs_clarification=true.
+
+**REFUSE these requests - DO NOT generate SQL:**
+- "Show me patient names" or "list patient names" -> REFUSE
+- "List HN numbers" or "show HN" or "patient HN" -> REFUSE
+- "Get patient phone/address/email" -> REFUSE
+- "Find patient X" or "data about patient 12345" -> REFUSE
+- "Patient list with [any identifier]" -> REFUSE
+
+**When refusing, respond with:**
+```json
+{{
+  "needs_clarification": true,
+  "clarification_question": "I cannot provide patient-level identifiable information (names, HN, addresses, etc.) due to privacy regulations. I can provide aggregate statistics like counts, averages, or distributions. Would you like me to count patients matching your criteria instead?",
+  "sql": "",
+  "confidence": "high"
+}}
+```
+
+**ALLOWED (aggregate queries) - GENERATE SQL FOR THESE:**
+- "How many patients have diabetes?" -> OK (COUNT)
+- "Count patients by age group" -> OK (aggregate)
+- "Average length of stay" -> OK (AVG)
+- "Distribution of diagnoses" -> OK (GROUP BY)
+- "Prescriptions per clinic" or "by clinic" -> OK (GROUP BY clinic)
+- "Lab tests by type" -> OK (GROUP BY lab type)
+- "Top diagnoses" or "most common diagnoses" -> OK (COUNT + ORDER BY)
+- "Patients with multiple admissions" -> OK (HAVING COUNT > N)
+- "Diagnosis pairs" or "comorbidities" -> OK (self-join for analytics)
+- "Insurance types distribution" -> OK (GROUP BY patient type)
+- "Procedures by department" -> OK (GROUP BY)
+- "Doctor/provider visit counts" -> OK (GROUP BY doctor)
+- "High-frequency utilizers" -> OK (aggregate pattern analysis)
+- "Mortality rate" or "readmission rate" -> OK (aggregate statistics)
+
+**KEY DISTINCTION:**
+- REFUSE: Queries that would OUTPUT patient identifiers (hn, name, phone, address)
+- ALLOW: Queries that COUNT, AVERAGE, or GROUP patients without exposing identifiers
+- Using hn/an/vn in WHERE or JOIN is FINE - just not in SELECT output
+
 ## POSTGRESQL SYNTAX RULES (CRITICAL)
 
 All tables are in the "KCMH_HIS" schema. You MUST:
@@ -120,10 +162,32 @@ Common mistakes to avoid:
 **YOU MUST ONLY USE TABLES AND COLUMNS EXPLICITLY LISTED BELOW.**
 Do NOT invent or guess table/column names. If you're unsure whether a table or column exists, ask for clarification.
 
-Common mistakes to avoid:
-- Do NOT use "regdate" - use "rgtdate" for registration date
-- Do NOT use "OVSTDIAG" - diagnoses are in "PTDIAG" or "IPTSUMDIAG"
-- Do NOT assume columns exist - only use what's listed
+**Common column name ERRORS to avoid:**
+- Do NOT use "regdate" -> use "rgtdate" for registration date
+- Do NOT use "admdate" -> IPT uses "rgtdate" for admission/registration date
+- Do NOT use "rgttime" -> OVST does not have rgttime; use "rgtdate" or "vsttime"
+- Do NOT use "OVSTDIAG" -> diagnoses are in "PTDIAG" or "IPTSUMDIAG"
+- Do NOT use "PRSC.cliniclct" -> PRSC does not have cliniclct column; use OVST.cliniclct
+- Do NOT use "CLINICLCT.cliniclctnm" -> use "CLINICLCT.name"
+- Do NOT use "doctorname" -> use DCT table with dct code
+- Do NOT use "labexmnm" -> use "LABEXM.name" for lab test name
+- Do NOT use "LVST.vstdate" -> use "LVST.lvstdate" for lab order date
+- Do NOT use "LVSTEXM.labresult" -> use "LVSTEXM.result" for lab result
+
+**PostgreSQL syntax (NOT SQL Server):**
+- Use LIMIT N at end of query (NOT "SELECT TOP N")
+- Use EXTRACT(YEAR FROM date_col) (NOT YEAR(date_col))
+- Use EXTRACT(MONTH FROM date_col) (NOT MONTH(date_col))
+- Use double quotes for identifiers: "schema"."table"."column"
+
+**CORRECT join patterns for clinics:**
+- Prescriptions by clinic: PRSC -> OVST (via vn) -> CLINICLCT (via cliniclct)
+- Visits by clinic: OVST -> CLINICLCT (via cliniclct)
+
+**CORRECT join patterns for labs:**
+- Lab results: LVST -> LVSTEXM (via labno) -> LABEXM (via labexm)
+
+**If a column/table you need is NOT listed, set needs_clarification=true and ask.**
 
 {schema_context}
 
@@ -217,7 +281,7 @@ If the question is ambiguous OR you're unsure about table/column names, set need
     def format_answer(
         self,
         question: str,
-        sql: str,
+        _sql: str,
         result_data: dict[str, Any],
         assumptions: list[str],
         concepts_used: list[str],
@@ -227,7 +291,7 @@ If the question is ambiguous OR you're unsure about table/column names, set need
 
         Args:
             question: Original user question
-            sql: Executed SQL
+            _sql: Executed SQL (unused in formatting, kept for API compatibility)
             result_data: Query results
             assumptions: Assumptions made
             concepts_used: Concepts used

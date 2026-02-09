@@ -6,6 +6,7 @@ Uses the enhanced schema catalog (schema_knowledge.json) for:
 - Join confidence scoring
 - Thai medical context
 - PHI detection
+- Question-aware schema retrieval (dynamic table selection)
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.schema_catalog import SchemaCatalog, get_schema_catalog, JoinStep
+from app.schema_retriever import SchemaRetriever, get_schema_retriever, reset_schema_retriever
 from app.concepts import ConceptLibrary, load_concepts
 from app.config import get_settings
 from app.llm import get_llm_client
@@ -49,21 +51,74 @@ PRIORITY_TABLES: list[str] = [
 ]
 
 
-def build_schema_context(catalog: SchemaCatalog, max_tables: int = 60) -> str:
+def build_schema_context(
+    catalog: SchemaCatalog,
+    max_tables: int = 60,
+    question: str | None = None,
+) -> str:
     """
     Build schema context string for LLM prompt.
 
+    When a question is provided, uses SchemaRetriever to dynamically
+    discover tables relevant to the question. This ensures that tables
+    like OVSTPRESS (blood pressure) are included when the user asks
+    about blood pressure, even if they're not in PRIORITY_TABLES.
+
     Args:
         catalog: Schema catalog with enhanced metadata
-        max_tables: Maximum tables to include
+        max_tables: Maximum tables to include with full column details
+        question: User question for question-aware table selection
 
     Returns:
         Formatted schema context string
     """
+    retriever = get_schema_retriever(catalog)
+
+    # -----------------------------------------------------------------
+    # 1. Build the full Table Directory (ALL tables, compact)
+    # -----------------------------------------------------------------
+    table_directory = retriever.build_table_directory()
+
+    # -----------------------------------------------------------------
+    # 2. Determine which tables get full column details
+    # -----------------------------------------------------------------
+    tables_to_include: list[str] = []
+
+    # Always include priority tables first
+    for t in PRIORITY_TABLES:
+        if catalog.table_exists(t) and t not in tables_to_include:
+            tables_to_include.append(t)
+
+    # Add question-relevant tables (if question provided)
+    if question:
+        relevant = retriever.retrieve(question, top_k=15)
+        for t in relevant:
+            if t not in tables_to_include:
+                tables_to_include.append(t)
+
+    # Fill remaining slots alphabetically up to max
+    for t in sorted(catalog.tables.keys()):
+        if t not in tables_to_include:
+            tables_to_include.append(t)
+        if len(tables_to_include) >= max_tables:
+            break
+
+    # Mark which tables have full details in the directory
+    detailed_set = set(tables_to_include)
+    table_directory = retriever.mark_detailed_tables(
+        table_directory, detailed_set
+    )
+
+    # -----------------------------------------------------------------
+    # 3. Build the detailed schema context
+    # -----------------------------------------------------------------
     lines = [
-        "## DATABASE SCHEMA",
+        table_directory,
         "",
-        "Use ONLY the tables and columns listed below. All table names must be prefixed with `KCMH_HIS.`",
+        "## DETAILED SCHEMA (Tables with Full Column Info)",
+        "",
+        "Use ONLY the tables and columns listed below for SQL generation.",
+        "All table names must be prefixed with `KCMH_HIS.`",
         "(e.g., `KCMH_HIS.OVST`, `KCMH_HIS.PTDIAG`)",
         "",
         "### Universal Join Keys",
@@ -72,21 +127,6 @@ def build_schema_context(catalog: SchemaCatalog, max_tables: int = 60) -> str:
         "- `vn`: Visit Number - links outpatient visit tables (OVST is home table)",
         "",
     ]
-
-    # Collect tables to include
-    tables_to_include: list[str] = []
-
-    # Add priority tables first
-    for t in PRIORITY_TABLES:
-        if catalog.table_exists(t) and t not in tables_to_include:
-            tables_to_include.append(t)
-
-    # Add remaining tables up to max
-    for t in sorted(catalog.tables.keys()):
-        if t not in tables_to_include:
-            tables_to_include.append(t)
-        if len(tables_to_include) >= max_tables:
-            break
 
     # Build table sections
     lines.append("### Tables and Columns")
@@ -366,7 +406,11 @@ def build_concepts_context(concepts: ConceptLibrary) -> str:
 
 
 class SQLGenerator:
-    """SQL generator with schema and concept grounding."""
+    """SQL generator with schema and concept grounding.
+
+    Schema context is now built per-question: the table directory (static)
+    is combined with question-relevant table details (dynamic).
+    """
 
     def __init__(
         self,
@@ -377,7 +421,6 @@ class SQLGenerator:
 
         self._catalog: SchemaCatalog | None = None
         self._concepts: ConceptLibrary | None = None
-        self._schema_context: str | None = None
         self._concepts_context: str | None = None
 
     @property
@@ -395,18 +438,22 @@ class SQLGenerator:
         return self._concepts
 
     @property
-    def schema_context(self) -> str:
-        """Get or build schema context."""
-        if self._schema_context is None:
-            self._schema_context = build_schema_context(self.catalog)
-        return self._schema_context
-
-    @property
     def concepts_context(self) -> str:
         """Get or build concepts context."""
         if self._concepts_context is None:
             self._concepts_context = build_concepts_context(self.concepts)
         return self._concepts_context
+
+    def build_schema_context_for_question(self, question: str) -> str:
+        """Build question-aware schema context.
+
+        The schema context now adapts to each question, ensuring
+        that relevant tables (e.g. OVSTPRESS for blood pressure)
+        are included even if they're not in the priority list.
+        """
+        return build_schema_context(
+            self.catalog, question=question
+        )
 
     def generate(
         self,
@@ -423,10 +470,13 @@ class SQLGenerator:
         Returns:
             SQLGenerationResponse with SQL and metadata
         """
+        # Build question-aware schema context (dynamic per question)
+        schema_context = self.build_schema_context_for_question(question)
+
         client = get_llm_client()
         return client.generate_sql(
             user_question=question,
-            schema_context=self.schema_context,
+            schema_context=schema_context,
             concepts_context=self.concepts_context,
             conversation_history=conversation_history,
         )
@@ -439,8 +489,8 @@ class SQLGenerator:
         """Reload catalog and concepts from disk."""
         self._catalog = None
         self._concepts = None
-        self._schema_context = None
         self._concepts_context = None
+        reset_schema_retriever()
 
 
 # Global generator instance

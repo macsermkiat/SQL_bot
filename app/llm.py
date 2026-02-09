@@ -157,11 +157,21 @@ Common mistakes to avoid:
 - Case sensitivity: Text comparisons are case-sensitive; use LOWER() for case-insensitive matching
 - For drug/medicine searches: Always search multiple name fields (check column types - only use LIKE on [text] columns)
 
-## CRITICAL: USE ONLY LISTED TABLES AND COLUMNS
+## TABLE DISCOVERY AND USAGE
 
-**YOU MUST ONLY USE TABLES AND COLUMNS EXPLICITLY LISTED BELOW.**
-Do NOT invent or guess table/column names. If you're unsure whether a table or column exists, ask for clarification.
-**Pay close attention to ⚠️ warnings** in the schema - they flag common mistakes.
+**The schema below has TWO sections:**
+1. **TABLE DIRECTORY**: A compact list of ALL available tables with descriptions.
+   Use this to identify which tables are relevant to the question.
+2. **DETAILED SCHEMA**: Full column info for priority + question-relevant tables.
+   Tables marked [DETAILED] in the directory have full column info below.
+
+**Rules:**
+- Prefer tables marked [DETAILED] -- you have full column info for them.
+- If a table in the directory looks relevant but is NOT [DETAILED], you may
+  still reference it using universal keys (hn, vn, an) and infer column names
+  from the table description. If unsure, set needs_clarification=true.
+- Do NOT invent table names that are not in the directory.
+- **Pay close attention to ⚠️ warnings** in the schema - they flag common mistakes.
 
 ## TABLE ALIAS BEST PRACTICES
 

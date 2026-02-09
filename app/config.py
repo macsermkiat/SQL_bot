@@ -43,8 +43,8 @@ class Settings(BaseSettings):
 
     # Safety settings
     sql_statement_timeout_ms: int = Field(
-        default=15000,
-        description="SQL statement timeout in milliseconds",
+        default=60000,
+        description="SQL statement timeout in milliseconds (default 60s, increased from 15s for complex queries)",
     )
     sql_max_rows: int = Field(
         default=2000,

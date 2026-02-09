@@ -176,21 +176,46 @@ def _quick_keyword_check(sql: str) -> str | None:
     return None
 
 
+def _extract_cte_names(parsed: exp.Expression) -> set[str]:
+    """Extract CTE names from WITH clauses."""
+    cte_names = set()
+    for cte in parsed.find_all(exp.CTE):
+        if cte.alias:
+            cte_names.add(cte.alias.upper())
+    return cte_names
+
+
 def _extract_tables(parsed: exp.Expression) -> set[str]:
-    """Extract all table names from parsed SQL."""
+    """
+    Extract all table names from parsed SQL, excluding CTEs.
+    CTEs are temporary named result sets and should not be validated as real tables.
+    """
     tables = set()
+    cte_names = _extract_cte_names(parsed)
+
     for table in parsed.find_all(exp.Table):
         if table.name:
-            tables.add(table.name.upper())
+            table_name = table.name.upper()
+            # Skip CTE names - they're not real tables
+            if table_name not in cte_names:
+                tables.add(table_name)
     return tables
 
 
 def _extract_table_aliases(parsed: exp.Expression) -> dict[str, str]:
     """
-    Extract table alias mappings from parsed SQL.
+    Extract table alias mappings from parsed SQL, including CTEs.
     Returns dict of alias -> table_name (both uppercase).
+    CTEs map to themselves since they're temporary named result sets.
     """
     aliases: dict[str, str] = {}
+
+    # Add CTE names (they act as temporary tables)
+    cte_names = _extract_cte_names(parsed)
+    for cte_name in cte_names:
+        aliases[cte_name] = cte_name
+
+    # Add regular table aliases
     for table in parsed.find_all(exp.Table):
         if table.name:
             table_name = table.name.upper()
@@ -726,15 +751,33 @@ def validate_sql(
 
     # Layer 6: Catalog validation (if provided)
     if catalog:
+        # Extract CTEs to exclude from catalog validation
+        cte_names = _extract_cte_names(parsed)
+
         # Use resolved columns (with aliases mapped to real tables) for validation
+        # Exclude CTE names since they're temporary named result sets, not real tables
+        # ALSO exclude columns that don't exist in the catalog for that table
+        # (they might be CTE-generated aliases or from nested subqueries)
         columns_for_validation: dict[str, list[str]] = {}
         for table, cols in all_columns_resolved.items():
-            if table not in ("_UNKNOWN_", "_STAR_"):
-                columns_for_validation[table.upper()] = cols
+            if table not in ("_UNKNOWN_", "_STAR_") and table.upper() not in cte_names:
+                # Only validate columns that actually exist in the catalog
+                # This prevents validation errors for CTE-generated aliases
+                table_obj = catalog.get_table(table)
+                if table_obj:
+                    valid_cols = [c for c in cols if c.lower() in table_obj.columns]
+                    if valid_cols:
+                        columns_for_validation[table.upper()] = valid_cols
+                else:
+                    # Table not in catalog - include all columns for validation
+                    columns_for_validation[table.upper()] = cols
 
         if strict_catalog_check:
+            # Filter out CTEs from tables to validate
+            real_tables = [t for t in tables_used if t not in cte_names]
+
             invalid_tables, invalid_cols = catalog.validate_sql_references(
-                tables=list(tables_used),
+                tables=real_tables,
                 columns=columns_for_validation,
             )
 

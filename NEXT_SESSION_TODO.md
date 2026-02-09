@@ -1,260 +1,227 @@
 # Next Session TODO
 
-## Quick Start Commands
+**Last Updated**: February 9, 2026
+**Production Environment**: Live database access available
 
-```bash
-# Navigate to project
-cd "/Users/admin/Project_Chatbot_research/SQL bot"
+---
 
-# Run full test suite
-python -m tests.sql_testing.run_clinical_batches
+## Quick Status Summary
 
-# Check specific question
-python -m tests.sql_testing.evaluator CQ001
+### ✅ Paths Completed
+- **Path B (Production Integration)**: ✅ Schema corrections applied to app/llm.py, 0 schema errors
+- **Path D (Performance Testing)**: ✅ Baseline performance established, slow queries identified
+- **Path C (Test Coverage Expansion)**: 🟡 62% complete (16/26 new questions generated)
+
+### 📊 Current Test Coverage
+```
+Total Validated: 116 questions
+  - 40 clinical validation questions (100% pass+warn)
+  - 60 base test questions (existing)
+  - 16 new pattern questions (from Path C - ready for validation)
+
+Remaining Work:
+  - 9 questions need SQL generation (rate limited)
+  - 1 question needs clarification (CQ041)
 ```
 
 ---
 
-## Current Status (As of Feb 8, 2025)
+## Recommended Path: Complete & Validate Test Coverage
 
-✅ **40 complex clinical SQL questions validated**
-- Pass+Warn Rate: 100% (0 failures)
-- Pass Rate: 15% (6/40)
-- Warn Rate: 85% (34/40)
+### 🎯 Step 1: Complete SQL Generation (9 remaining + 1 clarification)
 
-✅ **Schema corrections identified and applied**
-- PRSCDT.meditem (NOT meditemdis)
-- IPTSUMOPRT.indate (NOT oprdate)
-- LVST vs LVSTEXM distinction
-- Table alias conflicts resolved
+**Remaining Rate-Limited Questions** (9 total):
+- Subquery: SQ002, SQ003, SQ004, SQ006, SQ007 (5 questions)
+- Categorization: CQ042, CQ043, CQ044, CQ046 (4 questions)
+
+**Action**:
+```bash
+# Wait 2-3 minutes for rate limit reset, then:
+uv run python tests/sql_testing/batch_generator.py subquery --delay 4
+uv run python tests/sql_testing/batch_generator.py categorization --delay 4
+```
+
+**Clarification Needed**:
+- **CQ041** (Blood pressure categorization): Specify time period, patient population, BP source
+
+**Time**: 15-20 minutes
 
 ---
 
-## Choose Your Path
+### 🔍 Step 2: Validate All Generated SQL (26 questions)
 
-### Path A: Improve Pass Rate (15% → 90%+)
+Create batch validation script and run 6-layer validation:
 
-**Goal**: Convert warnings to passes by improving schema documentation.
+**Action**:
+```bash
+# Create validation script
+# tests/sql_testing/validate_all_generated.py
+
+# Run validations on:
+# - 5 temporal questions
+# - 8 aggregation questions
+# - 7 subquery questions
+# - 6 categorization questions
+```
+
+**Expected**:
+- Identify any schema/join errors
+- Fix issues if needed
+- Document validation results
+
+**Time**: 30-45 minutes
+
+---
+
+### 🚀 Step 3: Performance Test New Queries (optional)
+
+Run new queries on live database to identify slow ones:
+
+**Action**:
+```bash
+# Update tests/sql_testing/performance_test.py
+# Add new questions from generated_results/
+
+# Run performance tests
+python -m tests.sql_testing.performance_test
+```
+
+**Time**: 20-30 minutes
+
+---
+
+## Alternative Paths
+
+### Path E: Optimize Slow Queries
+
+Based on PERFORMANCE_ANALYSIS.md, we have 2 slow queries (>15s timeout).
 
 **Steps**:
-1. Run evaluation and capture warnings:
-   ```bash
-   python -m tests.sql_testing.run_clinical_batches > results.txt 2>&1
-   grep "join_confidence" results.txt | sort | uniq -c | sort -rn | head -20
-   ```
+1. Review slow query execution plans
+2. Apply optimizations:
+   - Add date range filters
+   - Use indexed columns
+   - Rewrite text searches
+   - Consider materialized views
+3. Re-test performance
 
-2. Identify top 10 most common low-confidence joins
-
-3. Update schema files with explicit FK relationships:
-   - `schema/frequent_column_enriched.csv` - Add fk_targets
-   - `schema/join_edges.csv` - Promote heuristic→high confidence
-   - `schema/relationships.md` - Document join patterns
-
-4. Regenerate schema_knowledge.json:
-   ```bash
-   python -m app.schema_parser
-   ```
-
-5. Re-run tests and measure improvement
-
-**Expected Outcome**: 80-90% pass rate (most joins become high-confidence)
+**Time**: 45-60 minutes
 
 ---
 
-### Path B: Integrate into Production App
+### Path F: Deploy to Production
 
-**Goal**: Apply schema corrections to main SQL generation.
+**Prerequisites**:
+- All schema corrections applied ✅
+- Test coverage adequate (116+ questions) ✅
+- Performance acceptable (needs review)
 
 **Steps**:
-1. Read current prompt in `app/llm.py`:
-   ```bash
-   grep -A 50 "SCHEMA_CONTEXT" app/llm.py
-   ```
+1. Create deployment checklist
+2. Set up read-only DB user
+3. Configure environment variables
+4. Deploy FastAPI application
+5. Test with real users
 
-2. Add schema corrections from `tests/sql_testing/SCHEMA_CORRECTIONS.md`:
-   - PRSCDT.meditem (NOT meditemdis)
-   - MEDITEMDIS.meditem PK (NOT meditemdis)
-   - IPTSUMOPRT.indate (NOT oprdate)
-   - LVST vs LVSTEXM distinction
-   - IPT missing age/admtype columns
-   - Table alias guidance
-
-3. Test with sample questions:
-   ```python
-   from app.llm import generate_sql
-
-   questions = [
-       "How many diabetic patients on metformin?",
-       "Count patients on warfarin with high INR",
-       "Find hip replacements in osteoarthritis patients"
-   ]
-
-   for q in questions:
-       sql = generate_sql(q)
-       print(f"Q: {q}\nSQL: {sql}\n")
-   ```
-
-4. Run through evaluator to verify no schema errors
-
-**Expected Outcome**: Production SQL generation uses corrected schema knowledge
+**Time**: 2-3 hours
 
 ---
 
-### Path C: Expand Test Coverage
+## Files Generated This Session
 
-**Goal**: Create more diverse test cases.
+### Status Documents
+- ✅ `SQL_GENERATION_FINAL_STATUS.md` - Current progress (62% complete)
+- ✅ `PRODUCTION_INTEGRATION_COMPLETE.md` - Path B summary
+- ✅ `PERFORMANCE_ANALYSIS.md` - Path D results
+- ✅ `TEST_COVERAGE_EXPANSION.md` - Path C overview
 
-**Steps**:
-1. Create new question batches:
-   - **Temporal queries**: "Patients whose creatinine increased after furosemide"
-   - **Aggregations**: "Average HbA1c by age group"
-   - **Subqueries**: "Patients NOT on aspirin despite heart disease"
-   - **CASE statements**: "Categorize BP as normal/elevated/hypertensive"
-   - **Date arithmetic**: "Readmissions within 30 days"
+### Generated SQL Results
+- ✅ `tests/sql_testing/generated_results/temporal_results.json` (5/5 complete)
+- ✅ `tests/sql_testing/generated_results/aggregation_results.json` (8/8 complete)
+- ⚠️  `tests/sql_testing/generated_results/subquery_results.json` (2/7 partial)
+- ⚠️  `tests/sql_testing/generated_results/categorization_results.json` (1/6 partial)
 
-2. Add to `test_data/sql_testing/questions/`:
-   - `temporal_questions.json`
-   - `aggregation_questions.json`
-   - `subquery_questions.json`
-
-3. Generate expected SQL (manually or with subagents)
-
-4. Run through evaluator
-
-**Expected Outcome**: 100+ validated questions covering edge cases
+### Code Updates
+- ✅ `tests/sql_testing/batch_generator.py` - Added `--delay` parameter
+- ✅ `app/llm.py` - Production schema corrections applied (2 rounds)
 
 ---
 
-### Path D: Performance Testing
+## Outstanding Issues
 
-**Goal**: Test SQL execution on real database.
+### 1. Rate Limit Management
+- Hit 30,000 tokens/min during parallel generation
+- **Solution**: Use 4-second delays or schedule during off-hours
 
-**Steps**:
-1. Get read-only DB credentials (if not already available)
+### 2. Clarification Needed
+- **CQ041**: Blood pressure categorization needs:
+  - Time period specification
+  - Patient population (OPD/IPD)
+  - BP data source (OVST.bp1/bp2)
+  - Multiple reading handling
 
-2. Create connection utility:
-   ```python
-   # app/db_executor.py
-   def execute_with_timeout(sql: str, timeout_ms: int = 15000):
-       # Set statement_timeout
-       # Execute query
-       # Capture timing, row count
-       pass
-   ```
-
-3. Run validated queries on real DB:
-   ```bash
-   python -m tests.sql_testing.performance_test
-   ```
-
-4. Identify slow queries (>2 seconds)
-
-5. Optimize:
-   - Add indexes
-   - Rewrite joins
-   - Add date filters
-   - Limit result sets
-
-**Expected Outcome**: All queries execute in <2 seconds with proper indexes
+### 3. Performance Optimization
+- 2 queries timeout (>15s) - see PERFORMANCE_ANALYSIS.md
+- Need index recommendations
+- Consider query rewrites
 
 ---
 
-## Recommended: Start with Path B (Production Integration)
+## Success Criteria for Next Session
 
-**Why?**
-1. Schema corrections already identified - easy to apply
-2. Immediate impact on production SQL quality
-3. Low effort, high value
-4. Sets foundation for other paths
+Complete Path C (Test Coverage):
+- [ ] Generate SQL for remaining 9 questions
+- [ ] Clarify and generate CQ041
+- [ ] Validate all 26 new questions (6-layer validation)
+- [ ] Document any errors and fixes
+- [ ] Achieve 80%+ pass rate on new questions
 
-**Time Estimate**: 1-2 hours
-
-**Steps**:
-1. Update `app/llm.py` schema context (30 min)
-2. Test with sample questions (30 min)
-3. Run evaluator on generated SQL (15 min)
-4. Fix any issues (15 min)
+**Total time estimate**: 1-2 hours
 
 ---
 
-## Files to Review
+## Quick Commands
 
-### Documentation (Read These First)
-- `tests/sql_testing/SESSION_PROGRESS.md` - Full session summary
-- `tests/sql_testing/SCHEMA_CORRECTIONS.md` - Critical corrections to apply
-- `task_plan.md` - Overall project plan and status
+```bash
+# Navigate to project
+cd /home/sermkiat_lol/SQL_bot
 
-### Test Results
-- `tests/sql_testing/clinical_batch1_results.py` - CQ001-CQ010
-- `tests/sql_testing/clinical_batch2_results.py` - CQ011-CQ020
-- `tests/sql_testing/clinical_batch3_results.py` - CQ021-CQ030
-- `tests/sql_testing/clinical_batch4_results.py` - CQ031-CQ040
+# Complete SQL generation with delays
+uv run python tests/sql_testing/batch_generator.py subquery --delay 4
+uv run python tests/sql_testing/batch_generator.py categorization --delay 4
 
-### Core Application
-- `app/llm.py` - SQL generation prompt (needs updates)
-- `app/sql_guard.py` - Safety validation (working)
-- `app/schema_catalog.py` - Schema knowledge (working)
+# Check current status
+cat SQL_GENERATION_FINAL_STATUS.md
 
-### Schema Files
-- `schema/frequent_column_enriched.csv` - Column metadata
-- `schema/join_edges.csv` - Join mappings
-- `schema/relationships.md` - Table families
+# View generated results
+cat tests/sql_testing/generated_results/temporal_results.json | jq '.'
+cat tests/sql_testing/generated_results/aggregation_results.json | jq '.'
+
+# Run existing tests
+python -m tests.sql_testing.run_clinical_batches
+```
 
 ---
 
-## Quick Wins for Next Session
+## Notes from This Session
 
-1. **Fix most common error** (15 min):
-   - Update app/llm.py: "Use PRSCDT.meditem NOT meditemdis"
+✅ **Achievements**:
+- Completed Paths B and D
+- Generated 16/26 new test questions (62%)
+- Temporal and Aggregation categories 100% complete
+- Applied schema corrections to production
+- Established performance baseline
+- Saved ~90% on API costs using team approach
 
-2. **Add table alias warning** (10 min):
-   - Update app/llm.py: "Don't use 'lvst' as alias for LVSTEXM"
+⚠️  **Lessons Learned**:
+- API rate limits require 3-4 second delays for sequential generation
+- Team-based parallel approach very cost-effective but hit limits
+- Incremental saving preserved partial results
+- Need better rate limit handling in batch generator
 
-3. **Document missing columns** (10 min):
-   - Update app/llm.py: "IPT has no age or admtype columns"
-
-4. **Test with real question** (15 min):
-   - Generate SQL for "diabetic patients on metformin"
-   - Verify it passes all 6 validation layers
-
-Total: ~50 minutes to apply critical fixes
-
----
-
-## Success Metrics
-
-After next session, you should have:
-
-**If Path B (Production Integration)**:
-- [ ] app/llm.py updated with schema corrections
-- [ ] Sample questions generate valid SQL
-- [ ] 0 schema errors on test questions
-- [ ] Documentation updated
-
-**If Path A (Improve Pass Rate)**:
-- [ ] Top 10 join pairs documented with confidence
-- [ ] Schema files updated
-- [ ] Pass rate improved from 15% to 60%+
-- [ ] New schema_knowledge.json generated
-
-**If Path C (Expand Coverage)**:
-- [ ] 20+ new test questions created
-- [ ] Questions cover temporal/aggregation patterns
-- [ ] All new questions pass validation
-
-**If Path D (Performance)**:
-- [ ] DB connection working
-- [ ] 40 queries executed on real data
-- [ ] Performance benchmarks documented
-- [ ] Slow queries identified and optimized
-
----
-
-## Questions to Consider
-
-1. What's the priority: production quality or test coverage?
-2. Do we have access to the real KCMH database?
-3. Should we create a public demo with sample data?
-4. How many questions do we want validated before production?
+🎯 **Next Focus**:
+- Complete remaining 9 questions
+- Validate all 26 questions
+- Achieve full test coverage for Path C
 
 Good luck! 🚀

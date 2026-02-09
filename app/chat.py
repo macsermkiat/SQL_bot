@@ -22,6 +22,7 @@ from app.schema_catalog import SchemaCatalog, get_schema_catalog
 from app.db import get_db
 from app.llm import get_llm_client
 from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult
+from app.query_complexity import analyze_query_complexity, format_complexity_warning
 from app.session import get_session_manager
 from app.sql_gen import get_sql_generator
 from app.sql_guard import SQLGuardError, validate_sql
@@ -173,16 +174,173 @@ class ChatOrchestrator:
                     confidence="low",
                 )
 
-        # Step 5: Execute query
+        # Step 5: Analyze query complexity
+        complexity = analyze_query_complexity(sql)
+        logger.info(f"Query complexity: {complexity.level} (~{complexity.estimated_seconds}s)")
+
+        # Add complexity warning to assumptions if high/critical
+        complexity_warning = None
+        if complexity.level in ("HIGH", "CRITICAL"):
+            complexity_warning = format_complexity_warning(complexity)
+            logger.warning(f"Complex query detected: {complexity_warning}")
+
+        # Step 6: Runtime validation with EXPLAIN (dry-run)
+        db = get_db()
+        is_valid_runtime, explain_error = db.explain_query(
+            sql=sql,
+            timeout_ms=5000,  # 5 second timeout for EXPLAIN
+        )
+
+        if not is_valid_runtime:
+            logger.warning(f"SQL EXPLAIN validation failed: {explain_error}")
+
+            # Try to fix by asking LLM to regenerate with runtime error
+            retry_response = await self._retry_with_error(
+                question=question,
+                failed_sql=sql,
+                error=explain_error or "Runtime validation failed",
+                history=history,
+            )
+
+            if retry_response:
+                # Validate the retry with both sql_guard and EXPLAIN
+                retry_validation = validate_sql(
+                    sql=retry_response.sql,
+                    catalog=self.catalog,
+                    max_rows=self._settings.sql_max_rows,
+                    strict_catalog_check=True,
+                )
+
+                if retry_validation.valid:
+                    # Check runtime validity too
+                    is_valid_retry, retry_explain_error = db.explain_query(
+                        sql=retry_response.sql,
+                        timeout_ms=5000,
+                    )
+
+                    if is_valid_retry:
+                        sql = retry_response.sql
+                        gen_response = retry_response
+                    else:
+                        return ChatResponse(
+                            session_id=session_id,
+                            answer=f"I couldn't execute the query. Error: {retry_explain_error}",
+                            sql=retry_response.sql,
+                            error=retry_explain_error,
+                            assumptions=retry_response.assumptions,
+                            confidence="low",
+                        )
+                else:
+                    return ChatResponse(
+                        session_id=session_id,
+                        answer=f"I couldn't execute the query. Error: {explain_error}",
+                        sql=sql,
+                        error=explain_error,
+                        assumptions=gen_response.assumptions,
+                        confidence="low",
+                    )
+            else:
+                return ChatResponse(
+                    session_id=session_id,
+                    answer=f"I couldn't execute the query. Error: {explain_error}",
+                    sql=sql,
+                    error=explain_error,
+                    assumptions=gen_response.assumptions,
+                    confidence="low",
+                )
+
+        # Step 7: Execute query (with retry on errors)
+        # Use complexity-based timeout (may be higher than default for complex queries)
+        execution_timeout = max(
+            complexity.suggested_timeout_ms,
+            self._settings.sql_statement_timeout_ms
+        )
+        logger.info(f"Executing with timeout: {execution_timeout}ms")
+
         try:
-            db = get_db()
             result = db.execute_query(
                 sql=sql,
-                timeout_ms=self._settings.sql_statement_timeout_ms,
+                timeout_ms=execution_timeout,
                 max_rows=self._settings.sql_max_rows,
             )
         except Exception as e:
-            logger.exception("Database execution error")
+            logger.warning(f"Database execution error: {e}")
+
+            # Determine if error is retryable
+            error_str = str(e)
+            is_timeout = "timeout" in error_str.lower() or "canceling statement" in error_str.lower()
+            is_runtime_error = any(x in error_str.lower() for x in [
+                "syntax error", "does not exist", "type", "invalid", "division by zero",
+                "out of range", "cannot cast", "ambiguous"
+            ])
+
+            # Try to fix by asking LLM to regenerate with execution error
+            if is_timeout or is_runtime_error:
+                retry_response = await self._retry_with_error(
+                    question=question,
+                    failed_sql=sql,
+                    error=f"Query execution failed: {error_str}",
+                    history=history,
+                )
+
+                if retry_response:
+                    # Validate the retry
+                    retry_validation = validate_sql(
+                        sql=retry_response.sql,
+                        catalog=self.catalog,
+                        max_rows=self._settings.sql_max_rows,
+                        strict_catalog_check=True,
+                    )
+
+                    if retry_validation.valid:
+                        # Check EXPLAIN validity
+                        is_valid_retry, retry_explain_error = db.explain_query(
+                            sql=retry_response.sql,
+                            timeout_ms=5000,
+                        )
+
+                        if is_valid_retry:
+                            # Try executing the retry
+                            try:
+                                result = db.execute_query(
+                                    sql=retry_response.sql,
+                                    timeout_ms=self._settings.sql_statement_timeout_ms,
+                                    max_rows=self._settings.sql_max_rows,
+                                )
+                                # Success! Use the retry response
+                                sql = retry_response.sql
+                                gen_response = retry_response
+                                logger.info("Retry execution succeeded")
+                            except Exception as retry_e:
+                                logger.exception("Retry execution also failed")
+                                return ChatResponse(
+                                    session_id=session_id,
+                                    answer=f"I couldn't execute the query. Error: {retry_e}",
+                                    sql=retry_response.sql,
+                                    error=str(retry_e),
+                                    assumptions=retry_response.assumptions,
+                                    confidence="low",
+                                )
+                        else:
+                            return ChatResponse(
+                                session_id=session_id,
+                                answer=f"I couldn't execute the query. Error: {retry_explain_error}",
+                                sql=retry_response.sql,
+                                error=retry_explain_error,
+                                assumptions=retry_response.assumptions,
+                                confidence="low",
+                            )
+                    else:
+                        return ChatResponse(
+                            session_id=session_id,
+                            answer=f"I couldn't execute the query. Error: {error_str}",
+                            sql=sql,
+                            error=error_str,
+                            assumptions=gen_response.assumptions,
+                            confidence="low",
+                        )
+
+            # Non-retryable error or retry failed - return error to user
             return ChatResponse(
                 session_id=session_id,
                 answer=f"I couldn't execute the query. Error: {e}",
@@ -193,7 +351,7 @@ class ChatOrchestrator:
                 confidence="low",
             )
 
-        # Step 6: Run sanity checks
+        # Step 8: Run sanity checks
         sanity_results = run_sanity_checks(result, gen_response.validation_checks)
 
         # Check if any critical sanity check failed
@@ -201,7 +359,7 @@ class ChatOrchestrator:
         if failed_checks:
             logger.warning(f"Sanity checks failed: {[c.message for c in failed_checks]}")
 
-        # Step 7: Format answer
+        # Step 9: Format answer
         answer = await self._format_answer(
             question=question,
             sql=sql,
@@ -210,6 +368,10 @@ class ChatOrchestrator:
             concepts_used=gen_response.concepts_used,
             failed_checks=failed_checks,
         )
+
+        # Add complexity warning if query was complex
+        if complexity_warning:
+            answer = f"{complexity_warning}\n\n{answer}"
 
         return ChatResponse(
             session_id=session_id,
@@ -263,15 +425,35 @@ class ChatOrchestrator:
                         if cols:
                             available_tables += f"\n\nVerified columns in {table_name}: {', '.join(cols)}"
 
+        # Determine error type and provide specific guidance
+        is_timeout = "timeout" in error.lower() or "canceling statement" in error.lower()
+
+        fix_guidance = "Remember: no PHI columns in SELECT, no SELECT *, and non-aggregate queries need LIMIT."
+
+        if is_timeout:
+            fix_guidance = """The query timed out. Apply these optimizations:
+1. Use CTEs to filter large tables (PTDIAG, OVST, IPT) BEFORE joining
+2. Pre-filter reference tables (MEDITEMDIS, ICD9CM, ICD10, LABEXM) in CTEs
+3. Use EXISTS instead of JOIN when counting DISTINCT
+4. Add date filters early (EXTRACT(YEAR FROM date_col) = year)
+5. Filter by indexed columns first (hn, an, vn, labexm, meditem)
+
+Example pattern:
+WITH filtered_set AS (
+    SELECT key_column FROM table WHERE <conditions> AND <date_filter>
+)
+SELECT COUNT(DISTINCT x) FROM main_table
+WHERE EXISTS (SELECT 1 FROM filtered_set WHERE key = main_table.key)"""
+
         # Add error context to history
         error_context = history + [
             {
                 "role": "assistant",
-                "content": f"I generated this SQL but it failed validation:\n```sql\n{failed_sql}\n```\nError: {error}{available_tables}",
+                "content": f"I generated this SQL but it failed:\n```sql\n{failed_sql}\n```\nError: {error}{available_tables}",
             },
             {
                 "role": "user",
-                "content": f"Please fix the SQL using ONLY the tables and columns listed above. Remember: no PHI columns in SELECT, no SELECT *, and non-aggregate queries need LIMIT. Original question: {question}",
+                "content": f"Please fix the SQL. {fix_guidance}\n\nOriginal question: {question}",
             },
         ]
 
@@ -315,7 +497,7 @@ class ChatOrchestrator:
 
         answer = llm.format_answer(
             question=question,
-            sql=sql,
+            _sql=sql,
             result_data=result_data,
             assumptions=assumptions,
             concepts_used=concepts_used,

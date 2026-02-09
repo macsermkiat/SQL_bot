@@ -34,7 +34,12 @@ class Database:
                 settings.db_url,
                 min_size=1,
                 max_size=10,
-                kwargs={"row_factory": dict_row},
+                timeout=30.0,  # Connection acquisition timeout
+                max_waiting=20,  # Max queued requests
+                kwargs={
+                    "row_factory": dict_row,
+                    "connect_timeout": 10,  # TCP connection timeout
+                },
             )
         return self._pool
 
@@ -105,6 +110,44 @@ class Database:
             execution_time_ms=round(execution_time, 2),
         )
 
+    def explain_query(self, sql: str, timeout_ms: int = 5000) -> tuple[bool, str | None]:
+        """
+        Validate SQL query using EXPLAIN (dry-run without executing).
+
+        This catches runtime errors like:
+        - Missing columns
+        - Type mismatches
+        - Invalid table references
+        - Syntax errors specific to PostgreSQL
+
+        Args:
+            sql: SQL query to validate
+            timeout_ms: Timeout in milliseconds (default 5s)
+
+        Returns:
+            Tuple of (is_valid, error_message)
+            - (True, None) if query is valid
+            - (False, error_message) if query has errors
+        """
+        try:
+            with self.connection() as conn:
+                # Set statement timeout for EXPLAIN
+                timeout_seconds = timeout_ms / 1000
+                conn.execute(f"SET statement_timeout = '{int(timeout_seconds * 1000)}ms'")
+
+                # Run EXPLAIN (doesn't execute, just validates and plans)
+                conn.execute(f"EXPLAIN {sql}")
+
+            return (True, None)
+        except Exception as e:
+            # Extract useful error message
+            error_str = str(e)
+            # Clean up the error message (remove connection details, etc.)
+            if "DETAIL:" in error_str:
+                # Include DETAIL as it often has helpful context
+                error_str = error_str.split("CONTEXT:")[0].strip()
+            return (False, error_str)
+
     def test_connection(self) -> bool:
         """Test database connectivity."""
         try:
@@ -115,10 +158,16 @@ class Database:
             return False
 
     def close(self) -> None:
-        """Close the connection pool."""
+        """Close the connection pool gracefully."""
         if self._pool:
-            self._pool.close()
-            self._pool = None
+            try:
+                # Close with timeout to prevent hanging at shutdown
+                self._pool.close(timeout=2.0)
+            except Exception:
+                # Ignore errors during shutdown (e.g., threading finalization)
+                pass
+            finally:
+                self._pool = None
 
 
 # Global database instance

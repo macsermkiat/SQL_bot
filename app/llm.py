@@ -155,116 +155,17 @@ Common mistakes to avoid:
 - For unknown status values, omit the filter or ask for clarification
 - NULL comparisons: Use "col IS NULL" not "col = NULL"
 - Case sensitivity: Text comparisons are case-sensitive; use LOWER() for case-insensitive matching
-- For drug/medicine searches: Always search multiple name fields (medname, tradename, chemname, brandname)
+- For drug/medicine searches: Always search multiple name fields (check column types - only use LIKE on [text] columns)
 
 ## CRITICAL: USE ONLY LISTED TABLES AND COLUMNS
 
 **YOU MUST ONLY USE TABLES AND COLUMNS EXPLICITLY LISTED BELOW.**
 Do NOT invent or guess table/column names. If you're unsure whether a table or column exists, ask for clarification.
+**Pay close attention to ⚠️ warnings** in the schema - they flag common mistakes.
 
-## CRITICAL SCHEMA CORRECTIONS (VALIDATED WITH 40 CLINICAL QUERIES)
+## TABLE ALIAS BEST PRACTICES
 
-### Prescription Tables - PRSCDT.meditem (NOT meditemdis) + Missing `hn`
-**Column name correction:**
-**WRONG**: PRSCDT.meditemdis = MEDITEMDIS.meditemdis
-**CORRECT**: PRSCDT.meditem = MEDITEMDIS.meditem
-
-- PRSCDT has FK column named **meditem** (NOT meditemdis)
-- MEDITEMDIS has PK column named **meditem** (NOT meditemdis)
-
-**PRSCDT does NOT have `hn` column:**
-- PRSCDT only has `prscno` and `meditem` (no patient identifier)
-- MUST JOIN to PRSC table to get `hn`, `vn`, or `prscdate`
-- Join pattern: "KCMH_HIS"."PRSC" p JOIN "KCMH_HIS"."PRSCDT" pd ON p.prscno = pd.prscno
-
-### Procedure Tables - IPTSUMOPRT.indate (NOT oprdate)
-**WRONG**: WHERE EXTRACT(YEAR FROM IPTSUMOPRT.oprdate) = 2025
-**CORRECT**: WHERE EXTRACT(YEAR FROM IPTSUMOPRT.indate) = 2025
-
-- IPTSUMOPRT has **indate** for procedure start date (NOT oprdate)
-- IPTSUMOPRT has **outdate** for procedure end date
-- IPTSUMOPRT has **icd9cm** for procedure code
-
-### Lab Tables - LVST vs LVSTEXM (TWO DIFFERENT TABLES!)
-**LVST** (Lab order header):
-- Columns: hn, lvstdate, labgrp, an, dct, ln, labno
-- Does NOT have: labexm, result
-- Purpose: Lab order metadata
-
-**LVSTEXM** (Lab exam results):
-- Columns: hn, lvstdate, labexm, result, an, ln, labno
-- Has: labexm (FK to LABEXM), result
-- Purpose: Individual lab test results
-
-**CRITICAL**: Do NOT use alias "lvst" for LVSTEXM table (causes validation errors)
-**USE**: Explicit aliases like "lexm" or "lvstexm" instead
-
-**CORRECT lab result query**:
-```sql
-FROM "KCMH_HIS"."LVSTEXM" lexm
-JOIN "KCMH_HIS"."LABEXM" lab ON lexm.labexm = lab.labexm
-WHERE LOWER(lab.name) LIKE '%hemoglobin%'
-  AND CAST(lexm.result AS NUMERIC) > 10
-```
-
-### IPT Table - Missing Columns
-**IPT has NO age column**:
-- To filter by age, JOIN with PT table and calculate: EXTRACT(YEAR FROM AGE(CURRENT_DATE, PT.birthdate))
-- Or omit age filter and ask for clarification
-
-**IPT has NO admtype column**:
-- Cannot distinguish emergency vs elective admissions
-- Ask user for clarification or use alternate criteria
-
-### IPTSUMDIAG Table - Missing `hn` Column (CRITICAL!)
-**IPTSUMDIAG does NOT have `hn` column**:
-- IPTSUMDIAG only has `an` (admission number)
-- To get patient identifier `hn`, you MUST JOIN to IPT table
-- **WRONG**: `SELECT hn FROM IPTSUMDIAG` (will fail!)
-- **CORRECT**: `SELECT i.hn FROM IPTSUMDIAG d JOIN IPT i ON d.an = i.an`
-
-**Example - Count diabetes patients from inpatient diagnoses:**
-```sql
--- WRONG (will error: column "hn" does not exist)
-SELECT COUNT(DISTINCT hn) FROM IPTSUMDIAG WHERE icd10 >= 'E10' AND icd10 < 'E15'
-
--- CORRECT (JOIN to IPT for hn)
-SELECT COUNT(DISTINCT i.hn)
-FROM "KCMH_HIS"."IPTSUMDIAG" d
-JOIN "KCMH_HIS"."IPT" i ON d.an = i.an
-WHERE d.icd10 >= 'E10' AND d.icd10 < 'E15'
-```
-
-### Header-Detail Table Pattern (CRITICAL!)
-Many tables follow a **header-detail pattern** where detail tables DON'T have `hn` column:
-
-**PRSCDT (Prescription Detail) - Missing `hn` Column:**
-- PRSCDT only has `prscno` (prescription number) and `meditem` (medication code)
-- To get patient identifier `hn`, you MUST JOIN to PRSC (prescription header)
-- **WRONG**: `SELECT hn FROM PRSCDT` (will fail!)
-- **CORRECT**: `SELECT p.hn FROM PRSC p JOIN PRSCDT pd ON p.prscno = pd.prscno`
-
-**Example - Count patients prescribed Dilantin:**
-```sql
--- WRONG (will error: column "hn" does not exist)
-SELECT COUNT(DISTINCT hn)
-FROM PRSCDT
-WHERE meditem IN (SELECT meditem FROM MEDITEMDIS WHERE medname LIKE '%dilantin%')
-
--- CORRECT (JOIN to PRSC for hn)
-SELECT COUNT(DISTINCT p.hn)
-FROM "KCMH_HIS"."PRSC" p
-JOIN "KCMH_HIS"."PRSCDT" pd ON p.prscno = pd.prscno
-WHERE pd.meditem IN (SELECT meditem FROM MEDITEMDIS WHERE medname LIKE '%dilantin%')
-```
-
-**General Pattern - Always JOIN detail to header:**
-- **PRSC** (header: has `hn`, `vn`, `prscdate`) + **PRSCDT** (detail: has `meditem`, `prscno`)
-- **IPT** (header: has `hn`, `an`, `indate`) + **IPTSUMDIAG/IPTSUMOPRT** (detail: has `an`, diagnosis/procedure)
-- **OVST** (header: has `hn`, `vn`, `vstdate`) + **PTDIAG/PTOPRT** (detail: has `vn`, diagnosis/procedure)
-
-### Table Alias Best Practices
-**AVOID aliases that conflict with real table names**:
+**AVOID aliases that conflict with real table names:**
 - Do NOT use "lvst" as alias for LVSTEXM (conflicts with LVST table)
 - Do NOT use "pt" as alias for PTDIAG (conflicts with PT table)
 - Do NOT use "dct" as alias for DCTSPEC (conflicts with DCT table)
@@ -272,201 +173,9 @@ WHERE pd.meditem IN (SELECT meditem FROM MEDITEMDIS WHERE medname LIKE '%dilanti
 
 ## PERFORMANCE OPTIMIZATION (PREVENT TIMEOUTS)
 
-### Use CTEs to Filter Early
-When joining multiple large tables, filter data FIRST using CTEs (Common Table Expressions):
+**Use CTEs to filter large tables before joining.** Pre-filter reference tables (marked `pre_filter_required` in schema) in CTEs before joining to transactional tables.
 
-**SLOW (joins everything then filters):**
-```sql
-SELECT COUNT(DISTINCT o.vn)
-FROM OVST o
-JOIN PTDIAG d ON o.vn = d.vn
-JOIN PRSC p ON o.vn = p.vn
-JOIN PRSCDT pd ON p.prscno = pd.prscno
-WHERE EXTRACT(YEAR FROM o.vstdate) = 2025
-  AND d.icd10 >= 'E10' AND d.icd10 < 'E15'
-  AND pd.meditem IN (...)
-```
-
-**FAST (filters first, then joins small sets):**
-```sql
-WITH diabetes_visits AS (
-    SELECT DISTINCT vn FROM "KCMH_HIS"."PTDIAG"
-    WHERE icd10 >= 'E10' AND icd10 < 'E15'
-    AND EXTRACT(YEAR FROM vstdate) = 2025
-),
-drug_visits AS (
-    SELECT DISTINCT p.vn
-    FROM "KCMH_HIS"."PRSC" p
-    JOIN "KCMH_HIS"."PRSCDT" pd ON p.prscno = pd.prscno
-    WHERE pd.meditem IN (...)
-)
-SELECT COUNT(DISTINCT o.vn)
-FROM "KCMH_HIS"."OVST" o
-WHERE EXTRACT(YEAR FROM o.vstdate) = 2025
-  AND EXISTS (SELECT 1 FROM diabetes_visits dv WHERE dv.vn = o.vn)
-  AND EXISTS (SELECT 1 FROM drug_visits dg WHERE dg.vn = o.vn)
-```
-
-### Use EXISTS Instead of JOIN for Counting
-When counting DISTINCT values, use EXISTS instead of JOIN to avoid Cartesian products:
-
-**SLOW (JOIN creates many duplicate rows):**
-```sql
-SELECT COUNT(DISTINCT vn)
-FROM OVST o
-JOIN PTDIAG d ON o.vn = d.vn
-WHERE d.icd10 LIKE 'E11%'
-```
-
-**FAST (EXISTS checks without duplicates):**
-```sql
-SELECT COUNT(DISTINCT vn)
-FROM "KCMH_HIS"."OVST" o
-WHERE EXISTS (
-    SELECT 1 FROM "KCMH_HIS"."PTDIAG" d
-    WHERE d.vn = o.vn AND d.icd10 LIKE 'E11%'
-)
-```
-
-### Pre-filter Reference Tables (CRITICAL PATTERN!)
-**ALWAYS pre-filter small lookup tables BEFORE joining to large transactional tables.**
-
-Reference tables to pre-filter:
-- **MEDITEMDIS** (medications) - ~10K rows
-- **ICD10** (diagnoses) - ~15K rows
-- **ICD9CM** (procedures) - ~5K rows
-- **LABEXM** (lab tests) - ~2K rows
-
-#### Medication Example:
-**SLOW (searches drug names on every prescription):**
-```sql
-FROM PRSCDT pd
-JOIN MEDITEMDIS m ON pd.meditem = m.meditem
-WHERE LOWER(m.medname) LIKE '%metformin%'
-```
-
-**FAST (pre-filter medications in CTE):**
-```sql
-WITH metformin_drugs AS (
-    SELECT meditem FROM "KCMH_HIS"."MEDITEMDIS"
-    WHERE LOWER(medname) LIKE '%metformin%'
-       OR LOWER(tradename) LIKE '%metformin%'
-       OR LOWER(chemname) LIKE '%metformin%'
-)
-SELECT ...
-FROM "KCMH_HIS"."PRSCDT" pd
-JOIN metformin_drugs m ON pd.meditem = m.meditem
-```
-
-#### Procedure Example (ICD9CM):
-**Pattern: For ANY procedure query, pre-filter ICD9CM table first**
-```sql
-WITH target_procedures AS (
-    SELECT icd9cm FROM "KCMH_HIS"."ICD9CM"
-    WHERE icd9cm LIKE '01.2%'  -- Code pattern
-       OR LOWER(name) LIKE '%craniotomy%'
-       OR LOWER(thainame) LIKE '%craniotomy%'
-)
-SELECT COUNT(*)
-FROM "KCMH_HIS"."IPTSUMOPRT" ip
-WHERE ip.icd9cm IN (SELECT icd9cm FROM target_procedures)
-  AND EXTRACT(YEAR FROM ip.indate) = 2025
-```
-
-#### Diagnosis Example (ICD10):
-**Pattern: For complex diagnosis searches, pre-filter ICD10 table first**
-```sql
-WITH cancer_codes AS (
-    SELECT icd10 FROM "KCMH_HIS"."ICD10"
-    WHERE icd10 >= 'C00' AND icd10 < 'D00'  -- Cancer range
-       OR LOWER(name) LIKE '%cancer%'
-       OR LOWER(thainame) LIKE '%มะเร็ง%'
-)
-SELECT COUNT(DISTINCT hn)
-FROM "KCMH_HIS"."PTDIAG"
-WHERE icd10 IN (SELECT icd10 FROM cancer_codes)
-```
-
-#### Lab Test Example (LABEXM):
-```sql
-WITH thyroid_tests AS (
-    SELECT labexm FROM "KCMH_HIS"."LABEXM"
-    WHERE LOWER(name) LIKE '%tsh%'
-       OR LOWER(name) LIKE '%t3%'
-       OR LOWER(name) LIKE '%t4%'
-)
--- Use JOIN instead of IN for better performance
-SELECT COUNT(DISTINCT lexm.ln)
-FROM "KCMH_HIS"."LVSTEXM" lexm
-INNER JOIN thyroid_tests tt ON lexm.labexm = tt.labexm
-WHERE EXTRACT(YEAR FROM lexm.lvstdate) = 2025
-```
-
-#### Numeric Result Validation (Lab Results):
-**For LVSTEXM.result filtering (CRITICAL - prevents timeouts!):**
-
-**SLOW (regex on millions of rows):**
-```sql
-SELECT DISTINCT hn
-FROM "KCMH_HIS"."LVSTEXM"
-WHERE labexm IN (SELECT labexm FROM ...)
-  AND result ~ '^[0-9]+(\.[0-9]+)?$'
-  AND CAST(result AS NUMERIC) > 200
-```
-
-**FAST (use CASE for graceful handling):**
-```sql
-SELECT DISTINCT lexm.hn
-FROM "KCMH_HIS"."LVSTEXM" lexm
-INNER JOIN filtered_tests ft ON lexm.labexm = ft.labexm
-WHERE EXTRACT(YEAR FROM lexm.lvstdate) = 2025
-  AND lexm.result IS NOT NULL
-  AND CASE
-        WHEN lexm.result ~ '^[0-9]+(\.[0-9]+)?$'
-        THEN CAST(lexm.result AS NUMERIC)
-        ELSE 0
-      END > 200
-```
-
-**Key points:**
-- Use **INNER JOIN** instead of `IN (subquery)` for better index usage
-- Use **CASE** to handle invalid values (returns 0 for non-numeric)
-- Filter by date BEFORE checking result values
-- ALWAYS use proper regex syntax: `'^[0-9]+(\.[0-9]+)?$'` (don't forget closing `'$`)
-
-### Always Add Date Filters Early
-Large tables (OVST, IPT, PRSC, LVST, LVSTEXM) MUST have date filters:
-```sql
-WHERE EXTRACT(YEAR FROM vstdate) = 2025  -- REQUIRED for OVST
-WHERE EXTRACT(YEAR FROM lvstdate) = 2025  -- REQUIRED for LVSTEXM
-```
-
-**CRITICAL: LVSTEXM is EXTREMELY LARGE** (millions of lab results)
-- ALWAYS filter by date first: `EXTRACT(YEAR FROM lvstdate) = year`
-- ALWAYS use INNER JOIN (not IN) when joining to reference tables
-- For result filtering, use CASE instead of regex validation
-- Example:
-```sql
--- GOOD: Date filter + JOIN + CASE
-SELECT DISTINCT lexm.hn
-FROM "KCMH_HIS"."LVSTEXM" lexm
-INNER JOIN filtered_tests ft ON lexm.labexm = ft.labexm
-WHERE EXTRACT(YEAR FROM lexm.lvstdate) = 2025
-  AND CASE WHEN lexm.result ~ '^[0-9.]+$' THEN CAST(lexm.result AS NUMERIC) ELSE 0 END > 200
-
--- BAD: Will timeout!
-SELECT DISTINCT hn FROM "KCMH_HIS"."LVSTEXM"
-WHERE result ~ '^[0-9]+$' AND CAST(result AS NUMERIC) > 200
-```
-
-### Summary: Timeout Prevention Checklist
-- ✅ Use CTEs to filter large tables before joining
-- ✅ Use EXISTS instead of JOIN when counting DISTINCT
-- ✅ **Pre-filter reference tables (MEDITEMDIS, ICD9CM, ICD10, LABEXM) in CTEs**
-- ✅ **Use INNER JOIN instead of IN (subquery) for better index usage**
-- ✅ Add date filters FIRST, then other filters
-- ✅ For LVSTEXM.result: Use CASE instead of regex for numeric validation
-- ✅ Avoid multiple LIKE '%term%' on large text columns (pre-filter in CTE)
+**Use EXISTS instead of JOIN when counting DISTINCT** to avoid Cartesian products.
 
 **Universal Pattern for Reference Tables:**
 ```sql
@@ -481,23 +190,18 @@ WHERE <date filter>
   AND <other filters>
 ```
 
-**Common column name ERRORS to avoid:**
-- Do NOT use "regdate" -> use "rgtdate" for registration date
-- Do NOT use "admdate" -> IPT uses "rgtdate" for admission/registration date
-- Do NOT use "rgttime" -> OVST does not have rgttime; use "rgtdate" or "vsttime"
-- Do NOT use "OVSTDIAG" -> diagnoses are in "PTDIAG" or "IPTSUMDIAG"
-- Do NOT use "PRSC.cliniclct" -> PRSC does not have cliniclct column; use OVST.cliniclct
-- Do NOT use "CLINICLCT.cliniclctnm" -> use "CLINICLCT.name"
-- Do NOT use "doctorname" -> use DCT table with dct code
-- Do NOT use "labexmnm" -> use "LABEXM.name" for lab test name
-- Do NOT use "LVST.vstdate" -> use "LVST.lvstdate" for lab order date
-- Do NOT use "LVSTEXM.labresult" -> use "LVSTEXM.result" for lab result
+**For numeric text columns (e.g., lab results):** Use CASE for graceful handling:
+```sql
+CASE WHEN col ~ '^[0-9]+(\.[0-9]+)?$' THEN CAST(col AS NUMERIC) ELSE 0 END > threshold
+```
 
-**Common REGEX ERRORS to avoid:**
-- ALWAYS close regex patterns with quotes: `result ~ '^[0-9]+(\.[0-9]+)?$'` (NOT `result ~ '^[0-9]+(\.[0-9]+)?`)
-- Use `$` to match end of string: `'^[0-9]+$'` matches numeric only
-- Escape special chars in LIKE: Use `LOWER(col) LIKE '%term%'` for simple text search
-- For numeric validation, consider: `result ~ '^[0-9]+(\.[0-9]+)?$'` before CAST
+**Timeout Prevention:**
+- Use CTEs to filter large tables before joining
+- Use EXISTS instead of JOIN when counting DISTINCT
+- Pre-filter reference tables in CTEs (INNER JOIN, not IN subquery)
+- Add date filters FIRST on tables marked `requires_date_filter`
+- For text results: Use CASE instead of regex for numeric validation
+- Avoid multiple LIKE '%term%' on large text columns (pre-filter in CTE)
 
 **PostgreSQL syntax (NOT SQL Server):**
 - Use LIMIT N at end of query (NOT "SELECT TOP N")
@@ -505,22 +209,7 @@ WHERE <date filter>
 - Use EXTRACT(MONTH FROM date_col) (NOT MONTH(date_col))
 - Use double quotes for identifiers: "schema"."table"."column"
 
-**CORRECT join patterns for clinics:**
-- Prescriptions by clinic: PRSC -> OVST (via vn) -> CLINICLCT (via cliniclct)
-- Visits by clinic: OVST -> CLINICLCT (via cliniclct)
-
-**CORRECT join patterns for labs:**
-- Lab results: LVSTEXM -> LABEXM (via labexm) for test names/results
-- Lab orders: LVST -> LVSTEXM (via labno) if you need order metadata
-
-**CORRECT join patterns for drugs:**
-- Drug prescriptions: PRSC -> PRSCDT (via prscno) -> MEDITEMDIS (via meditem)
-- Search drug names in these TEXT columns ONLY:
-  - MEDITEMDIS.medname (primary drug name)
-  - MEDITEMDIS.tradename (trade name)
-  - MEDITEMDIS.chemname (chemical name)
-- DO NOT search in brandname column (it's numeric, not text!)
-- Example: LOWER(m.medname) LIKE '%metformin%' OR LOWER(m.tradename) LIKE '%metformin%' OR LOWER(m.chemname) LIKE '%metformin%'
+**Regex:** ALWAYS close patterns with quotes: `'^[0-9]+(\.[0-9]+)?$'`
 
 **If a column/table you need is NOT listed, set needs_clarification=true and ask.**
 

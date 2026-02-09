@@ -101,8 +101,9 @@ def build_schema_context(catalog: SchemaCatalog, max_tables: int = 60) -> str:
         comment = f" - {table.comment}" if table.comment else ""
         lines.append(f"**{table_name}**{comment}")
 
-        # Columns with metadata
-        col_parts = []
+        # Columns with metadata - prioritize important columns
+        important_parts = []  # PK, FK, correction, join requirement
+        regular_parts = []
         for col_name, col in sorted(table.columns.items()):
             # Build column display with DATA TYPE
             markers = []
@@ -136,12 +137,31 @@ def build_schema_context(catalog: SchemaCatalog, max_tables: int = 60) -> str:
                 hint = col.comment[:30] + "..." if len(col.comment) > 30 else col.comment
                 thai_hint = f" ({hint})"
 
-            col_parts.append(f"{col_name}{marker_str}{thai_hint}")
+            # Add correction note as inline warning
+            warning = f" ⚠️ {col.correction_note}" if col.correction_note else ""
+            part = f"{col_name}{marker_str}{thai_hint}{warning}"
+
+            # Prioritize: PK, FK, PHI, correction_note, requires_join_table
+            is_important = (
+                col.is_pk or col.is_fk or col.is_phi
+                or col.correction_note or col.requires_join_table
+            )
+            if is_important:
+                important_parts.append(part)
+            else:
+                regular_parts.append(part)
+
+        # Combine: important columns first, then regular
+        col_parts = important_parts + regular_parts
 
         # Limit columns shown per table
         if len(col_parts) > 15:
-            shown = col_parts[:12]
-            shown.append(f"... +{len(col_parts) - 12} more columns")
+            # Always show all important columns, truncate regular ones
+            max_regular = max(15 - len(important_parts), 3)
+            shown = important_parts + regular_parts[:max_regular]
+            remaining = len(col_parts) - len(shown)
+            if remaining > 0:
+                shown.append(f"... +{remaining} more columns")
             col_parts = shown
 
         lines.append(f"  Columns: {', '.join(col_parts)}")
@@ -197,6 +217,67 @@ def build_schema_context(catalog: SchemaCatalog, max_tables: int = 60) -> str:
     lines.append("- **Always use date filters** on large tables (OVST, IPT, PRSC, etc.)")
     lines.append("- **Aggregate queries** don't need LIMIT; detail queries require LIMIT")
     lines.append("")
+
+    # Add header-detail patterns section (from CSV requires_join_table metadata)
+    detail_tables: dict[str, set[str]] = {}  # header_table -> set of detail tables
+    for table_name in tables_to_include:
+        table = catalog.get_table(table_name)
+        if not table:
+            continue
+        for col in table.columns.values():
+            if col.requires_join_table:
+                header = col.requires_join_table
+                if table_name not in detail_tables:
+                    detail_tables[table_name] = set()
+                detail_tables[table_name].add(header)
+
+    if detail_tables:
+        lines.append("### Header-Detail Table Patterns (CRITICAL)")
+        lines.append("Detail tables without hn/vn must JOIN to header for patient identifier:")
+        lines.append("")
+        for detail_name, headers in sorted(detail_tables.items()):
+            for header in sorted(headers):
+                lines.append(f"- **{detail_name}** → JOIN **{header}** for patient identifier (hn/vn)")
+        lines.append("")
+
+    # Add performance critical tables section (from CSV performance_hint metadata)
+    perf_tables: dict[str, set[str]] = {}
+    for table_name in tables_to_include:
+        table = catalog.get_table(table_name)
+        if not table:
+            continue
+        hints: set[str] = set()
+        for col in table.columns.values():
+            if col.performance_hint:
+                for hint in col.performance_hint.split(","):
+                    hints.add(hint.strip())
+        if hints:
+            perf_tables[table_name] = hints
+
+    if perf_tables:
+        lines.append("### Performance Critical Tables")
+        lines.append("These tables require special handling to prevent timeouts:")
+        lines.append("")
+        for tname, hints in sorted(perf_tables.items()):
+            lines.append(f"- **{tname}**: {', '.join(sorted(hints))}")
+        lines.append("")
+
+    # Add common column name corrections (from CSV correction_note metadata)
+    corrections: list[str] = []
+    for table_name in tables_to_include:
+        table = catalog.get_table(table_name)
+        if not table:
+            continue
+        for col in table.columns.values():
+            if col.correction_note and "NOT " in col.correction_note:
+                corrections.append(f"- {table_name}.{col.name}: {col.correction_note}")
+
+    if corrections:
+        lines.append("### Common Column Name Mistakes")
+        lines.append("")
+        for c in sorted(corrections):
+            lines.append(c)
+        lines.append("")
 
     # Add table hints
     lines.append("### Common Query Patterns")

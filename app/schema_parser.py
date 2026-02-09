@@ -68,6 +68,9 @@ class Column:
     join_peers: list[str] = field(default_factory=list)  # "TABLE.column" format
     join_warning: str = ""
     is_phi: bool = False
+    correction_note: str = ""       # Warning about common mistakes
+    requires_join_table: str = ""   # Header table needed for hn/vn
+    performance_hint: str = ""      # Performance guidance
 
 
 @dataclass
@@ -190,6 +193,9 @@ class SchemaKnowledge:
                             "join_peers": c.join_peers,
                             "join_warning": c.join_warning,
                             "is_phi": c.is_phi,
+                            "correction_note": c.correction_note,
+                            "requires_join_table": c.requires_join_table,
+                            "performance_hint": c.performance_hint,
                         }
                         for cname, c in t.columns.items()
                     },
@@ -259,6 +265,9 @@ class SchemaKnowledge:
                     join_peers=cdata.get("join_peers", []),
                     join_warning=cdata.get("join_warning", ""),
                     is_phi=cdata.get("is_phi", False),
+                    correction_note=cdata.get("correction_note", ""),
+                    requires_join_table=cdata.get("requires_join_table", ""),
+                    performance_hint=cdata.get("performance_hint", ""),
                 )
                 table.columns[cname] = column
 
@@ -419,6 +428,9 @@ def parse_frequent_columns(
                 join_peers=join_peers,
                 join_warning=row.get("join_warning", "").strip(),
                 is_phi=is_phi,
+                correction_note=row.get("correction_note", "").strip(),
+                requires_join_table=row.get("requires_join_table", "").strip(),
+                performance_hint=row.get("performance_hint", "").strip(),
             )
 
             tables[table_name].columns[column_name] = column

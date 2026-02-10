@@ -68,6 +68,14 @@ class Table:
 
 
 @dataclass
+class JoinValidationCompat:
+    """Minimal join validation result for sql_guard compatibility."""
+    valid: bool
+    confidence: str
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Catalog:
     tables: dict[str, Table] = field(default_factory=dict)
     relationships: list[Relationship] = field(default_factory=list)
@@ -115,6 +123,28 @@ class Catalog:
             if (r.from_table == from_upper and r.to_table == to_upper)
             or (r.from_table == to_upper and r.to_table == from_upper)
         ]
+
+    def validate_join(
+        self,
+        table_a: str,
+        column_a: str,
+        table_b: str,
+        column_b: str,
+    ) -> "JoinValidationCompat":
+        """Validate a join (compatibility shim for sql_guard)."""
+        col_lower = column_a.lower()
+        # Universal keys are always high confidence
+        if col_lower in self.universal_keys and column_a.lower() == column_b.lower():
+            return JoinValidationCompat(valid=True, confidence="high", warnings=[])
+        # Check known relationships
+        rels = self.find_join_paths(table_a, table_b)
+        if rels:
+            return JoinValidationCompat(valid=True, confidence=rels[0].confidence, warnings=[])
+        return JoinValidationCompat(valid=False, confidence="heuristic", warnings=[])
+
+    def get_best_join(self, table_a: str, table_b: str) -> None:
+        """Get best join path (returns None for old Catalog)."""
+        return None
 
     def validate_sql_references(
         self,

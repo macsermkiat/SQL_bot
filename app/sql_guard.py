@@ -591,6 +591,7 @@ def _get_limit_value(parsed: exp.Expression) -> int | None:
 def _check_phi_in_select(
     columns: dict[str, list[str]],
     catalog: "SchemaCatalog | None" = None,
+    query_tables: set[str] | None = None,
 ) -> tuple[str | None, list[str]]:
     """
     Check if any PHI columns are in the SELECT output.
@@ -598,12 +599,15 @@ def _check_phi_in_select(
     Args:
         columns: Dict of table_name -> [column_names] from SELECT
         catalog: Optional catalog for enhanced PHI detection
+        query_tables: All tables referenced in the query (for context inference)
 
     Returns:
         Tuple of (error_message, phi_columns_found)
         error_message is None if OK
     """
     phi_found: list[str] = []
+    # Lowercase set of all tables in the query for context inference
+    all_query_tables = {t.lower() for t in (query_tables or set())}
 
     for table, cols in columns.items():
         table_lower = table.lower() if table else ""
@@ -614,11 +618,19 @@ def _check_phi_in_select(
 
             # Check context-sensitive PHI columns (e.g., "name")
             if col_lower in CONTEXT_PHI_COLUMNS:
-                # Only PHI if from patient tables, not reference tables
                 phi_tables = CONTEXT_PHI_COLUMNS[col_lower]
                 if table_lower in phi_tables and not is_reference_table:
+                    # Confirmed PHI from a patient table
                     phi_found.append(f"{table}.{col}" if table != "_UNKNOWN_" else col)
-                continue
+                    continue
+                if table_lower not in ("_unknown_", ""):
+                    # Known non-patient table - skip (e.g., DCT.name is OK)
+                    continue
+                # Table is unknown - check if any query table is a patient table
+                if all_query_tables & phi_tables:
+                    phi_found.append(col)
+                    continue
+                # No patient tables in query - fall through to PHI_COLUMNS check
 
             # Check hardcoded PHI list (skip for reference tables)
             if col_lower in PHI_COLUMNS:
@@ -739,7 +751,7 @@ def validate_sql(
         )
 
     # Layer 5: Check PHI in SELECT output (use resolved columns for better catalog lookup)
-    phi_error, phi_found = _check_phi_in_select(select_columns_resolved, catalog)
+    phi_error, phi_found = _check_phi_in_select(select_columns_resolved, catalog, tables_used)
     if phi_error:
         return ValidationResult(
             valid=False,
@@ -756,15 +768,16 @@ def validate_sql(
 
         # Use resolved columns (with aliases mapped to real tables) for validation
         # Exclude CTE names since they're temporary named result sets, not real tables
-        # ALSO exclude columns that don't exist in the catalog for that table
-        # (they might be CTE-generated aliases or from nested subqueries)
         columns_for_validation: dict[str, list[str]] = {}
         for table, cols in all_columns_resolved.items():
             if table not in ("_UNKNOWN_", "_STAR_") and table.upper() not in cte_names:
-                # Only validate columns that actually exist in the catalog
-                # This prevents validation errors for CTE-generated aliases
                 table_obj = catalog.get_table(table)
-                if table_obj:
+                if strict_catalog_check:
+                    # In strict mode, include ALL columns so unknown ones get caught
+                    columns_for_validation[table.upper()] = cols
+                elif table_obj:
+                    # Non-strict: filter to known columns to avoid false positives
+                    # from CTE-generated aliases or nested subqueries
                     valid_cols = [c for c in cols if c.lower() in table_obj.columns]
                     if valid_cols:
                         columns_for_validation[table.upper()] = valid_cols

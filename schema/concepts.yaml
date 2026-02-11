@@ -122,3 +122,35 @@ emergency_visit:
     - "OVST"
     - "CLINICLCT"
   notes: "May need to verify ER clinic codes in CLINICLCT"
+
+blood_pressure_vital:
+  description: "Blood pressure measurement from vital signs (OVSTPRESS table)"
+  tables:
+    - "OVSTPRESS"
+  notes: >
+    CRITICAL column mapping for OVSTPRESS (do NOT guess column names):
+    hbpn = systolic blood pressure (ความดันสูง, e.g. 120 mmHg).
+    lbpn = diastolic blood pressure (ความดันต่ำ, e.g. 80 mmHg).
+    Hypertension criteria: hbpn >= 140 OR lbpn >= 90.
+    WARNING: 'ps' is PAIN SCORE (not pressure systolic). 'pd' does NOT exist.
+    Join to OVST via vn for visit details. Join to PT via hn for patient counts.
+    Always filter by vstdate or prdate for performance.
+
+vital_signs:
+  description: "Vital signs measurement (OVSTPRESS table column reference)"
+  tables:
+    - "OVSTPRESS"
+  notes: >
+    OVSTPRESS column mapping (do NOT invent column names):
+    hbpn = systolic blood pressure (ความดันสูง).
+    lbpn = diastolic blood pressure (ความดันต่ำ).
+    pr = pulse rate (อัตราการเต้นชีพจร).
+    rr = respiratory rate (อัตราการหายใจ).
+    bt = body temperature (อุณหภูมิร่างกาย).
+    o2sat = oxygen saturation.
+    ps = pain score (ระดับความรู้สึกปวด) - NOT blood pressure.
+    weight = body weight (น้ำหนัก).
+    height = body height (ส่วนสูง).
+    dtx = blood sugar level (ระดับน้ำตาลในเลือด).
+    hct = hematocrit (ความเข้มเม็ดเลือดแดง).
+    prdate = date of measurement. vstdate = visit date.

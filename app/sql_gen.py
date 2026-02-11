@@ -400,6 +400,10 @@ def build_concepts_context(concepts: ConceptLibrary) -> str:
             lines.append(f"  - Tests: {', '.join(concept.tests)}")
         if concept.icd10_codes:
             lines.append(f"  - ICD-10: {', '.join(concept.icd10_codes)}")
+        if concept.tables:
+            lines.append(f"  - Tables: {', '.join(concept.tables)}")
+        if concept.notes:
+            lines.append(f"  - Note: {concept.notes}")
         lines.append("")
 
     return "\n".join(lines)

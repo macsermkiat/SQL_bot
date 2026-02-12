@@ -205,13 +205,71 @@ WHERE <date filter>
 CASE WHEN col ~ '^[0-9]+(\.[0-9]+)?$' THEN CAST(col AS NUMERIC) ELSE 0 END > threshold
 ```
 
-**Timeout Prevention:**
+**Timeout Prevention (CRITICAL - follow these rules to avoid timeouts):**
 - Use CTEs to filter large tables before joining
 - Use EXISTS instead of JOIN when counting DISTINCT
 - Pre-filter reference tables in CTEs (INNER JOIN, not IN subquery)
 - Add date filters FIRST on tables marked `requires_date_filter`
 - For text results: Use CASE instead of regex for numeric validation
 - Avoid multiple LIKE '%term%' on large text columns (pre-filter in CTE)
+- **NEVER scan the same large table twice** (see cross-year pattern below)
+
+**Cross-Year / Multi-Period Comparison (CRITICAL PATTERN):**
+When comparing data across years or periods, NEVER create separate CTEs that each scan
+the same large table. Instead, use a SINGLE scan with CASE WHEN for period classification:
+
+```sql
+-- SLOW (scans LVST twice -> timeout):
+-- WITH lvst_2024 AS (SELECT ... FROM LVST WHERE lvstdate BETWEEN '2024-01-01' AND '2024-12-31'),
+--      lvst_2025 AS (SELECT ... FROM LVST WHERE lvstdate BETWEEN '2025-01-01' AND '2025-12-31')
+
+-- FAST (single scan with period classification):
+WITH ref_codes AS (
+    -- Step 1: Pre-filter reference table (small result)
+    SELECT "labexm" FROM "KCMH_HIS"."LABEXM"
+    WHERE "name" LIKE '%HbA1c%'
+),
+lab_data AS (
+    -- Step 2: Single scan of large table, classify by period
+    SELECT lv."hn",
+           EXTRACT(YEAR FROM lv."lvstdate") AS lab_year,
+           lexm."result"
+    FROM "KCMH_HIS"."LVST" lv
+    INNER JOIN "KCMH_HIS"."LVSTEXM" lexm ON lv."labno" = lexm."labno"
+    INNER JOIN ref_codes rc ON lexm."labexm" = rc."labexm"
+    WHERE lv."lvstdate" >= '2024-01-01' AND lv."lvstdate" < '2026-01-01'
+)
+SELECT lab_year, COUNT(DISTINCT "hn") AS patient_count
+FROM lab_data
+GROUP BY lab_year
+```
+
+**Pre-filter Reference Tables Pattern:**
+Always extract reference table lookups into a small CTE FIRST, then INNER JOIN:
+```sql
+WITH target_codes AS (
+    SELECT "icd10" FROM "KCMH_HIS"."ICD10"
+    WHERE "icd10" LIKE 'E11%'
+)
+SELECT COUNT(DISTINCT d."hn")
+FROM "KCMH_HIS"."PTDIAG" d
+INNER JOIN target_codes tc ON d."icd10" = tc."icd10"
+WHERE d."vstdate" >= '2024-01-01'
+```
+
+**EXISTS Pattern for Counting Distinct Patients with Conditions:**
+When counting distinct patients matching criteria from different tables, use EXISTS:
+```sql
+SELECT COUNT(DISTINCT d."hn")
+FROM "KCMH_HIS"."PTDIAG" d
+WHERE d."icd10" LIKE 'E11%'
+  AND d."vstdate" >= '2024-01-01'
+  AND EXISTS (
+      SELECT 1 FROM "KCMH_HIS"."LVSTEXM" lexm
+      INNER JOIN "KCMH_HIS"."LVST" lv ON lexm."labno" = lv."labno"
+      WHERE lv."hn" = d."hn" AND lv."lvstdate" >= '2024-01-01'
+  )
+```
 
 **PostgreSQL syntax (NOT SQL Server):**
 - Use LIMIT N at end of query (NOT "SELECT TOP N")

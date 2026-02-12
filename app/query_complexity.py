@@ -123,20 +123,20 @@ def analyze_query_complexity(sql: str) -> QueryComplexity:
     # Determine level
     if score >= 60:
         level = "CRITICAL"
-        estimated = 30.0
-        timeout = 60000
+        estimated = 60.0
+        timeout = 120000
     elif score >= 40:
         level = "HIGH"
-        estimated = 15.0
-        timeout = 30000
+        estimated = 30.0
+        timeout = 60000
     elif score >= 20:
         level = "MEDIUM"
-        estimated = 5.0
-        timeout = 15000
+        estimated = 10.0
+        timeout = 30000
     else:
         level = "LOW"
-        estimated = 1.0
-        timeout = 10000
+        estimated = 2.0
+        timeout = 15000
 
     return QueryComplexity(
         level=level,

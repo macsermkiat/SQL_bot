@@ -25,6 +25,7 @@ from app.schema_catalog import SchemaCatalog, get_schema_catalog
 from app.db import CancellableQuery, QueryCancelledError, get_db
 from app.llm import get_llm_client
 from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult
+from app.staged_query import MAX_MATERIALIZE_ROWS, STAGE_TIMEOUT_MS, StagedExecutor
 from app.query_complexity import analyze_query_complexity, format_complexity_warning
 from app.session import get_session_manager
 from app.sql_gen import get_sql_generator
@@ -185,7 +186,7 @@ class ChatOrchestrator:
         complexity_warning = None
         if complexity.level in ("HIGH", "CRITICAL"):
             complexity_warning = format_complexity_warning(complexity)
-            logger.warning(f"Complex query detected: {complexity_warning}")
+            logger.info(f"Complex query detected: {complexity_warning}")
 
         # Step 6: Runtime validation with EXPLAIN (dry-run)
         db = get_db()
@@ -253,13 +254,14 @@ class ChatOrchestrator:
                 )
 
         # Step 7: Execute query (with retry on errors)
-        # Use complexity-based timeout (may be higher than default for complex queries)
-        execution_timeout = max(
-            complexity.suggested_timeout_ms,
-            self._settings.sql_statement_timeout_ms
+        # Use complexity-based timeout, capped at max
+        execution_timeout = min(
+            max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms),
+            self._settings.sql_max_timeout_ms,
         )
-        logger.info(f"Executing with timeout: {execution_timeout}ms")
+        logger.info(f"Executing with timeout: {execution_timeout}ms (complexity={complexity.level})")
 
+        result: QueryResult | None = None
         try:
             result = db.execute_query(
                 sql=sql,
@@ -269,7 +271,6 @@ class ChatOrchestrator:
         except Exception as e:
             logger.warning(f"Database execution error: {e}")
 
-            # Determine if error is retryable
             error_str = str(e)
             is_timeout = "timeout" in error_str.lower() or "canceling statement" in error_str.lower()
             is_runtime_error = any(x in error_str.lower() for x in [
@@ -277,8 +278,30 @@ class ChatOrchestrator:
                 "out of range", "cannot cast", "ambiguous"
             ])
 
-            # Try to fix by asking LLM to regenerate with execution error
-            if is_timeout or is_runtime_error:
+            # --- Staged execution fallback for timeouts ---
+            if is_timeout:
+                try:
+                    staged = StagedExecutor(db)
+                    if staged.can_decompose(sql):
+                        logger.info("Attempting staged query execution after timeout")
+                        staged_result = await asyncio.to_thread(
+                            staged.execute_staged,
+                            sql,
+                            execution_timeout,
+                            self._settings.sql_max_rows,
+                        )
+                        if staged_result is not None:
+                            result = staged_result.query_result
+                            logger.info(
+                                "Staged execution succeeded: %d stages, %.0fms staging",
+                                staged_result.stages_executed,
+                                staged_result.total_stage_time_ms,
+                            )
+                except Exception as staged_e:
+                    logger.warning(f"Staged execution failed: {staged_e}")
+
+            # --- LLM retry if staged didn't resolve it ---
+            if result is None and (is_timeout or is_runtime_error):
                 retry_response = await self._retry_with_error(
                     question=question,
                     failed_sql=sql,
@@ -287,7 +310,6 @@ class ChatOrchestrator:
                 )
 
                 if retry_response:
-                    # Validate the retry
                     retry_validation = validate_sql(
                         sql=retry_response.sql,
                         catalog=self.catalog,
@@ -296,21 +318,18 @@ class ChatOrchestrator:
                     )
 
                     if retry_validation.valid:
-                        # Check EXPLAIN validity
                         is_valid_retry, retry_explain_error = db.explain_query(
                             sql=retry_response.sql,
                             timeout_ms=5000,
                         )
 
                         if is_valid_retry:
-                            # Try executing the retry
                             try:
                                 result = db.execute_query(
                                     sql=retry_response.sql,
-                                    timeout_ms=self._settings.sql_statement_timeout_ms,
+                                    timeout_ms=execution_timeout,
                                     max_rows=self._settings.sql_max_rows,
                                 )
-                                # Success! Use the retry response
                                 sql = retry_response.sql
                                 gen_response = retry_response
                                 logger.info("Retry execution succeeded")
@@ -343,16 +362,17 @@ class ChatOrchestrator:
                             confidence="low",
                         )
 
-            # Non-retryable error or retry failed - return error to user
-            return ChatResponse(
-                session_id=session_id,
-                answer=f"I couldn't execute the query. Error: {e}",
-                sql=sql,
-                error=str(e),
-                assumptions=gen_response.assumptions,
-                concepts_used=gen_response.concepts_used,
-                confidence="low",
-            )
+            # Non-retryable error or all retries failed
+            if result is None:
+                return ChatResponse(
+                    session_id=session_id,
+                    answer=f"I couldn't execute the query. Error: {e}",
+                    sql=sql,
+                    error=str(e),
+                    assumptions=gen_response.assumptions,
+                    concepts_used=gen_response.concepts_used,
+                    confidence="low",
+                )
 
         # Step 8: Run sanity checks
         sanity_results = run_sanity_checks(result, gen_response.validation_checks)
@@ -428,12 +448,19 @@ class ChatOrchestrator:
 
         if is_timeout:
             fix_guidance = (
-                "The query timed out. Apply these optimizations:\n"
-                "1. Use CTEs to filter large tables BEFORE joining\n"
-                "2. Pre-filter reference tables in CTEs\n"
-                "3. Use EXISTS instead of JOIN when counting DISTINCT\n"
-                "4. Add date filters early\n"
-                "5. Filter by indexed columns first (hn, an, vn)"
+                "The query timed out. You MUST apply these optimizations:\n"
+                "1. NEVER scan the same large table twice - combine into ONE CTE "
+                "with CASE WHEN or EXTRACT(YEAR) for period classification\n"
+                "2. Pre-filter reference tables (LABEXM, ICD10, etc.) in a small "
+                "CTE FIRST, then INNER JOIN to large tables\n"
+                "3. Use EXISTS instead of JOIN when counting DISTINCT patients\n"
+                "4. Add date filters as the FIRST condition on large tables "
+                "(LVST, OVST, IPT, PRSC)\n"
+                "5. Combine UNION queries into a single query with CASE WHEN "
+                "when possible\n"
+                "6. For numeric text columns (lab results): apply date filter "
+                "BEFORE regex/CAST operations\n"
+                "7. Reduce the number of CTEs - merge CTEs that scan the same table"
             )
 
         error_context = history + [
@@ -701,11 +728,12 @@ class ChatOrchestrator:
                 return
 
         # Step 6: Execute query
-        exec_timeout = max(
-            complexity.suggested_timeout_ms,
-            self._settings.sql_statement_timeout_ms,
+        exec_timeout = min(
+            max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms),
+            self._settings.sql_max_timeout_ms,
         )
-        yield _progress("executing", "Running query on database...", 60)
+        logger.info(f"Executing with timeout: {exec_timeout}ms (complexity={complexity.level})")
+        yield _progress("executing", f"Running query on database ({complexity.level} complexity)...", 60)
 
         result = None
         try:
@@ -717,16 +745,49 @@ class ChatOrchestrator:
             raise
         except Exception as exec_err:
             error_str = str(exec_err)
-            retryable = (
+            is_timeout = (
                 "timeout" in error_str.lower()
                 or "canceling statement" in error_str.lower()
-                or any(x in error_str.lower() for x in [
-                    "syntax error", "does not exist", "type", "invalid",
-                    "division by zero", "out of range", "cannot cast", "ambiguous",
-                ])
             )
-            if retryable:
-                yield _progress("retrying_execution", "Retrying with optimized query...", 65)
+            is_runtime_error = any(x in error_str.lower() for x in [
+                "syntax error", "does not exist", "type", "invalid",
+                "division by zero", "out of range", "cannot cast", "ambiguous",
+            ])
+
+            # --- Staged execution fallback for timeouts ---
+            if is_timeout:
+                try:
+                    staged = StagedExecutor(get_db())
+                    if staged.can_decompose(sql):
+                        yield _progress(
+                            "staged_execution",
+                            "Retrying with staged query execution...",
+                            65,
+                        )
+                        staged_result = await asyncio.to_thread(
+                            staged.execute_staged,
+                            sql,
+                            exec_timeout,
+                            self._settings.sql_max_rows,
+                            STAGE_TIMEOUT_MS,
+                            MAX_MATERIALIZE_ROWS,
+                            cancellable,
+                        )
+                        if staged_result is not None:
+                            result = staged_result.query_result
+                            logger.info(
+                                "Staged execution succeeded: %d stages, %.0fms",
+                                staged_result.stages_executed,
+                                staged_result.total_stage_time_ms,
+                            )
+                except QueryCancelledError:
+                    raise
+                except Exception as staged_e:
+                    logger.warning("Staged execution failed: %s", staged_e)
+
+            # --- LLM retry if staged didn't resolve it ---
+            if result is None and (is_timeout or is_runtime_error):
+                yield _progress("retrying_execution", "Retrying with optimized query...", 70)
                 fixed = await self._streaming_retry(
                     question, sql, f"Query execution failed: {error_str}",
                     history, cancellable, run_explain=True,
@@ -735,7 +796,7 @@ class ChatOrchestrator:
                     try:
                         result = await asyncio.to_thread(
                             cancellable.execute, fixed[0], None,
-                            self._settings.sql_statement_timeout_ms,
+                            exec_timeout,
                             self._settings.sql_max_rows,
                         )
                         sql, gen = fixed

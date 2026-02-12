@@ -26,6 +26,7 @@ from app.db import CancellableQuery, QueryCancelledError, get_db
 from app.llm import get_llm_client
 from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult
 from app.staged_query import MAX_MATERIALIZE_ROWS, STAGE_TIMEOUT_MS, StagedExecutor
+from app.sql_optimizer import optimize_query
 from app.query_complexity import analyze_query_complexity, format_complexity_warning
 from app.session import get_session_manager
 from app.sql_gen import get_sql_generator
@@ -253,7 +254,13 @@ class ChatOrchestrator:
                     confidence="low",
                 )
 
-        # Step 7: Execute query (with retry on errors)
+        # Step 7: Optimize query (merge duplicate table scans)
+        optimized = optimize_query(sql)
+        if optimized:
+            logger.info("SQL optimizer: merged duplicate table scans")
+            sql = optimized
+
+        # Step 8: Execute query (with retry on errors)
         # Use complexity-based timeout, capped at max
         execution_timeout = min(
             max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms),
@@ -727,7 +734,13 @@ class ChatOrchestrator:
                             assumptions=gen.assumptions, confidence="low")
                 return
 
-        # Step 6: Execute query
+        # Step 6: Optimize query (merge duplicate table scans)
+        optimized = optimize_query(sql)
+        if optimized:
+            logger.info("SQL optimizer: merged duplicate table scans")
+            sql = optimized
+
+        # Step 7: Execute query
         exec_timeout = min(
             max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms),
             self._settings.sql_max_timeout_ms,

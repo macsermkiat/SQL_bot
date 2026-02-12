@@ -1,6 +1,6 @@
 /**
- * Chat interface logic for KCMH SQL Bot.
- * Handles message sending, receiving, and role-aware display.
+ * Chat interface with streaming progress and cancel support.
+ * Uses SSE (Server-Sent Events) via fetch + ReadableStream.
  */
 (function () {
     "use strict";
@@ -9,8 +9,11 @@
     var inputForm = document.getElementById("input-form");
     var messageInput = document.getElementById("message-input");
     var sendButton = document.getElementById("send-button");
+    var stopButton = document.getElementById("stop-button");
     var sessionId = null;
     var userRole = window.USER_ROLE || "standard_user";
+    var abortController = null;
+    var streamAborted = false;
 
     function escapeHtml(text) {
         var div = document.createElement("div");
@@ -38,11 +41,13 @@
                 var qr = metadata.query_result;
                 metaItems +=
                     '<span class="query-stat">' +
-                    qr.row_count + " rows" +
+                    qr.row_count +
+                    " rows" +
                     (qr.truncated ? " (truncated)" : "") +
                     "</span>" +
                     '<span class="query-stat">' +
-                    qr.execution_time_ms.toFixed(0) + " ms" +
+                    qr.execution_time_ms.toFixed(0) +
+                    " ms" +
                     "</span>";
             }
 
@@ -81,50 +86,111 @@
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
-    function addLoadingIndicator() {
-        var loadingDiv = document.createElement("div");
-        loadingDiv.className = "message assistant";
-        loadingDiv.id = "loading-message";
-        loadingDiv.innerHTML =
-            '<div class="message-content loading">' +
-            '<div class="loading-dots"><span></span><span></span><span></span></div>' +
-            "<span>Analyzing your question...</span></div>";
-        chatContainer.appendChild(loadingDiv);
+    function addProgressIndicator() {
+        var progressDiv = document.createElement("div");
+        progressDiv.className = "message assistant";
+        progressDiv.id = "progress-message";
+        progressDiv.innerHTML =
+            '<div class="message-content progress-content">' +
+            '<div class="progress-indicator">' +
+            '<div class="progress-spinner"></div>' +
+            '<span class="progress-text">Starting...</span>' +
+            "</div>" +
+            '<div class="progress-bar-container">' +
+            '<div class="progress-bar" style="width: 0%"></div>' +
+            "</div>" +
+            "</div>";
+        chatContainer.appendChild(progressDiv);
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
-    function removeLoadingIndicator() {
-        var el = document.getElementById("loading-message");
+    function updateProgress(message, progress) {
+        var progressMsg = document.getElementById("progress-message");
+        if (!progressMsg) return;
+
+        var textEl = progressMsg.querySelector(".progress-text");
+        var barEl = progressMsg.querySelector(".progress-bar");
+
+        if (textEl) textEl.textContent = message;
+        if (barEl) barEl.style.width = progress + "%";
+
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function removeProgressIndicator() {
+        var el = document.getElementById("progress-message");
         if (el) el.remove();
     }
 
-    function sendMessage(message) {
-        addMessage("user", message);
-        addLoadingIndicator();
-        sendButton.disabled = true;
+    function setLoadingState(loading) {
+        if (loading) {
+            sendButton.style.display = "none";
+            stopButton.style.display = "inline-flex";
+            messageInput.disabled = true;
+        } else {
+            sendButton.style.display = "";
+            stopButton.style.display = "none";
+            messageInput.disabled = false;
+            abortController = null;
+            messageInput.focus();
+        }
+    }
 
-        fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                message: message,
-                session_id: sessionId,
-            }),
-        })
-            .then(function (response) {
-                if (response.status === 401) {
-                    window.location.href = "/login";
-                    return null;
+    function stopQuery() {
+        streamAborted = true;
+        if (abortController) {
+            abortController.abort();
+            abortController = null;
+        }
+        removeProgressIndicator();
+        addMessage("assistant", "Query cancelled.", {});
+        setLoadingState(false);
+    }
+
+    function parseSSEEvents(text) {
+        var events = [];
+        var blocks = text.split("\n\n");
+
+        for (var i = 0; i < blocks.length; i++) {
+            var block = blocks[i].trim();
+            if (!block) continue;
+
+            var eventType = "message";
+            var data = null;
+            var lines = block.split("\n");
+
+            for (var j = 0; j < lines.length; j++) {
+                var line = lines[j];
+                if (line.indexOf("event: ") === 0) {
+                    eventType = line.substring(7).trim();
+                } else if (line.indexOf("data: ") === 0) {
+                    data = line.substring(6);
                 }
-                if (!response.ok) throw new Error("Failed to get response");
-                return response.json();
-            })
-            .then(function (data) {
-                removeLoadingIndicator();
-                if (!data) return;
+            }
 
+            if (data) {
+                try {
+                    events.push({ event: eventType, data: JSON.parse(data) });
+                } catch (e) {
+                    // Skip malformed JSON
+                }
+            }
+        }
+        return events;
+    }
+
+    function handleSSEEvent(event) {
+        if (streamAborted) return;
+        var data = event.data;
+
+        switch (event.event) {
+            case "progress":
+                updateProgress(data.message, data.progress);
+                break;
+
+            case "complete":
+                removeProgressIndicator();
                 sessionId = data.session_id;
-
                 addMessage("assistant", data.answer, {
                     confidence: data.confidence,
                     sql: data.sql,
@@ -132,9 +198,85 @@
                     error: data.error,
                     query_result: data.query_result,
                 });
+                break;
+
+            case "error":
+                removeProgressIndicator();
+                addMessage(
+                    "assistant",
+                    "An error occurred: " + (data.message || "Unknown error"),
+                    { error: data.message }
+                );
+                break;
+
+            case "cancelled":
+                removeProgressIndicator();
+                addMessage(
+                    "assistant",
+                    data.message || "Query cancelled.",
+                    {}
+                );
+                break;
+        }
+    }
+
+    function sendMessage(message) {
+        addMessage("user", message);
+        addProgressIndicator();
+        setLoadingState(true);
+
+        abortController = new AbortController();
+        streamAborted = false;
+        var buffer = "";
+
+        fetch("/api/chat/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: message,
+                session_id: sessionId,
+            }),
+            signal: abortController.signal,
+        })
+            .then(function (response) {
+                if (response.status === 401) {
+                    window.location.href = "/login";
+                    return;
+                }
+                if (!response.ok) {
+                    throw new Error("Server error: " + response.status);
+                }
+
+                var reader = response.body.getReader();
+                var decoder = new TextDecoder();
+
+                function pump() {
+                    return reader.read().then(function (result) {
+                        if (result.done) return;
+
+                        buffer += decoder.decode(result.value, { stream: true });
+
+                        var parts = buffer.split("\n\n");
+                        buffer = parts.pop();
+
+                        for (var i = 0; i < parts.length; i++) {
+                            var events = parseSSEEvents(parts[i] + "\n\n");
+                            for (var j = 0; j < events.length; j++) {
+                                handleSSEEvent(events[j]);
+                            }
+                        }
+
+                        return pump();
+                    });
+                }
+
+                return pump();
             })
             .catch(function (err) {
-                removeLoadingIndicator();
+                if (err.name === "AbortError") {
+                    return;
+                }
+                removeProgressIndicator();
                 addMessage(
                     "assistant",
                     "Sorry, I encountered an error. Please try again.",
@@ -142,10 +284,13 @@
                 );
             })
             .finally(function () {
-                sendButton.disabled = false;
-                messageInput.focus();
+                setLoadingState(false);
             });
     }
+
+    stopButton.addEventListener("click", function () {
+        stopQuery();
+    });
 
     inputForm.addEventListener("submit", function (e) {
         e.preventDefault();

@@ -13,13 +13,16 @@ Flow:
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
 from app.schema_catalog import SchemaCatalog, get_schema_catalog
-from app.db import get_db
+from app.db import CancellableQuery, QueryCancelledError, get_db
 from app.llm import get_llm_client
 from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult
 from app.query_complexity import analyze_query_complexity, format_complexity_warning
@@ -384,6 +387,81 @@ class ChatOrchestrator:
             query_result=result,
         )
 
+    def _retry_with_error_impl(
+        self,
+        question: str,
+        failed_sql: str,
+        error: str,
+        history: list[dict[str, str]],
+    ) -> Any:
+        """Retry SQL generation with error context (sync)."""
+        generator = get_sql_generator()
+
+        available_tables = ""
+        if self.catalog:
+            table_list = sorted(self.catalog.tables.keys())
+            available_tables = f"\n\nAvailable tables: {', '.join(table_list)}"
+
+            if "Unknown table" in error:
+                available_tables += "\n\nPlease use ONLY these exact table names."
+
+            if "Unknown column" in error:
+                for table_name in table_list:
+                    if table_name.lower() in failed_sql.lower():
+                        table = self.catalog.tables[table_name]
+                        cols = list(table.columns.keys())
+                        if cols:
+                            available_tables += (
+                                f"\n\nVerified columns in {table_name}: "
+                                f"{', '.join(cols)}"
+                            )
+
+        is_timeout = (
+            "timeout" in error.lower()
+            or "canceling statement" in error.lower()
+        )
+
+        fix_guidance = (
+            "Remember: no PHI columns in SELECT, no SELECT *, "
+            "and non-aggregate queries need LIMIT."
+        )
+
+        if is_timeout:
+            fix_guidance = (
+                "The query timed out. Apply these optimizations:\n"
+                "1. Use CTEs to filter large tables BEFORE joining\n"
+                "2. Pre-filter reference tables in CTEs\n"
+                "3. Use EXISTS instead of JOIN when counting DISTINCT\n"
+                "4. Add date filters early\n"
+                "5. Filter by indexed columns first (hn, an, vn)"
+            )
+
+        error_context = history + [
+            {
+                "role": "assistant",
+                "content": (
+                    f"I generated this SQL but it failed:\n"
+                    f"```sql\n{failed_sql}\n```\n"
+                    f"Error: {error}{available_tables}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Please fix the SQL. {fix_guidance}\n\n"
+                    f"Original question: {question}"
+                ),
+            },
+        ]
+
+        try:
+            return generator.generate(
+                question, conversation_history=error_context,
+            )
+        except Exception:
+            logger.exception("Retry failed")
+            return None
+
     async def _retry_with_error(
         self,
         question: str,
@@ -391,79 +469,12 @@ class ChatOrchestrator:
         error: str,
         history: list[dict[str, str]],
     ) -> Any:
-        """
-        Retry SQL generation with error context.
+        """Retry SQL generation with error context."""
+        return self._retry_with_error_impl(
+            question, failed_sql, error, history,
+        )
 
-        Args:
-            question: Original question
-            failed_sql: SQL that failed validation
-            error: Error message
-            history: Conversation history
-
-        Returns:
-            New SQLGenerationResponse or None
-        """
-        generator = get_sql_generator()
-
-        # Build helpful context about available tables/columns
-        available_tables = ""
-        if self.catalog:
-            table_list = sorted(self.catalog.tables.keys())
-            available_tables = f"\n\nAvailable tables: {', '.join(table_list)}"
-
-            # If error mentions unknown table, show similar tables
-            if "Unknown table" in error:
-                available_tables += "\n\nPlease use ONLY these exact table names."
-
-            # If error mentions unknown column, show columns for mentioned tables
-            if "Unknown column" in error:
-                # Extract table names from the failed SQL
-                for table_name in table_list:
-                    if table_name.lower() in failed_sql.lower():
-                        table = self.catalog.tables[table_name]
-                        cols = list(table.columns.keys())
-                        if cols:
-                            available_tables += f"\n\nVerified columns in {table_name}: {', '.join(cols)}"
-
-        # Determine error type and provide specific guidance
-        is_timeout = "timeout" in error.lower() or "canceling statement" in error.lower()
-
-        fix_guidance = "Remember: no PHI columns in SELECT, no SELECT *, and non-aggregate queries need LIMIT."
-
-        if is_timeout:
-            fix_guidance = """The query timed out. Apply these optimizations:
-1. Use CTEs to filter large tables (PTDIAG, OVST, IPT) BEFORE joining
-2. Pre-filter reference tables (MEDITEMDIS, ICD9CM, ICD10, LABEXM) in CTEs
-3. Use EXISTS instead of JOIN when counting DISTINCT
-4. Add date filters early (EXTRACT(YEAR FROM date_col) = year)
-5. Filter by indexed columns first (hn, an, vn, labexm, meditem)
-
-Example pattern:
-WITH filtered_set AS (
-    SELECT key_column FROM table WHERE <conditions> AND <date_filter>
-)
-SELECT COUNT(DISTINCT x) FROM main_table
-WHERE EXISTS (SELECT 1 FROM filtered_set WHERE key = main_table.key)"""
-
-        # Add error context to history
-        error_context = history + [
-            {
-                "role": "assistant",
-                "content": f"I generated this SQL but it failed:\n```sql\n{failed_sql}\n```\nError: {error}{available_tables}",
-            },
-            {
-                "role": "user",
-                "content": f"Please fix the SQL. {fix_guidance}\n\nOriginal question: {question}",
-            },
-        ]
-
-        try:
-            return generator.generate(question, conversation_history=error_context)
-        except Exception as e:
-            logger.exception("Retry failed")
-            return None
-
-    async def _format_answer(
+    def _format_answer_impl(
         self,
         question: str,
         sql: str,
@@ -472,20 +483,7 @@ WHERE EXISTS (SELECT 1 FROM filtered_set WHERE key = main_table.key)"""
         concepts_used: list[str],
         failed_checks: list[SanityCheckResult],
     ) -> str:
-        """
-        Format the final answer from query results.
-
-        Args:
-            question: Original question
-            sql: Executed SQL
-            result: Query result
-            assumptions: Assumptions made
-            concepts_used: Concepts used
-            failed_checks: Failed sanity checks
-
-        Returns:
-            Formatted answer string
-        """
+        """Format the final answer from query results (sync)."""
         llm = get_llm_client()
 
         result_data = {
@@ -503,18 +501,282 @@ WHERE EXISTS (SELECT 1 FROM filtered_set WHERE key = main_table.key)"""
             concepts_used=concepts_used,
         )
 
-        # Add warnings if sanity checks failed
         if failed_checks:
-            warnings = "\n\n⚠️ **Note**: Some data validation checks raised concerns:\n"
+            warnings = "\n\n**Note**: Some data validation checks raised concerns:\n"
             for check in failed_checks:
                 warnings += f"- {check.message}\n"
             answer += warnings
 
-        # Add truncation warning
         if result.truncated:
             answer += f"\n\n*Note: Results were limited to {result.row_count} rows.*"
 
         return answer
+
+    async def _format_answer(
+        self,
+        question: str,
+        sql: str,
+        result: QueryResult,
+        assumptions: list[str],
+        concepts_used: list[str],
+        failed_checks: list[SanityCheckResult],
+    ) -> str:
+        """Format the final answer from query results."""
+        return self._format_answer_impl(
+            question, sql, result, assumptions, concepts_used, failed_checks,
+        )
+
+
+    # ------------------------------------------------------------------
+    # Streaming interface
+    # ------------------------------------------------------------------
+
+    async def handle_message_streaming(
+        self,
+        request: ChatRequest,
+        cancellable: CancellableQuery,
+    ) -> AsyncGenerator[dict, None]:
+        """Handle a message with streaming progress events."""
+        session_manager = get_session_manager()
+        session = session_manager.get_or_create_session(request.session_id)
+        session.add_message("user", request.message)
+
+        try:
+            async for event in self._process_question_streaming(
+                question=request.message,
+                session_id=session.session_id,
+                cancellable=cancellable,
+            ):
+                if event.get("event") == "complete" and "data" in event:
+                    data = event["data"]
+                    session.add_message(
+                        "assistant",
+                        data.get("answer", ""),
+                        sql=data.get("sql"),
+                    )
+                yield event
+        except QueryCancelledError:
+            session.add_message("assistant", "Query cancelled by user")
+            yield {"event": "cancelled", "message": "Query cancelled by user"}
+        except Exception as e:
+            logger.exception("Error in streaming pipeline")
+            session.add_message("assistant", "An error occurred processing your question.")
+            yield {
+                "event": "error",
+                "step": "unknown",
+                "message": "An error occurred processing your question. Please try again.",
+            }
+
+    async def _streaming_retry(
+        self,
+        question: str,
+        sql: str,
+        error: str,
+        history: list[dict[str, str]],
+        cancellable: CancellableQuery,
+        *,
+        run_explain: bool = False,
+    ) -> tuple[str, Any] | None:
+        """Retry SQL generation, validate, and optionally EXPLAIN.
+
+        Returns (new_sql, new_gen_response) on success, or None.
+        """
+        cancellable.check_cancelled()
+        retry = await asyncio.to_thread(
+            self._retry_with_error_impl, question, sql, error, history,
+        )
+        if not retry:
+            return None
+
+        rv = validate_sql(
+            sql=retry.sql,
+            catalog=self.catalog,
+            max_rows=self._settings.sql_max_rows,
+            strict_catalog_check=True,
+        )
+        if not rv.valid:
+            return None
+
+        if run_explain:
+            ok, _ = await asyncio.to_thread(
+                cancellable.explain, retry.sql, 5000,
+            )
+            if not ok:
+                return None
+
+        return (retry.sql, retry)
+
+    async def _process_question_streaming(
+        self,
+        question: str,
+        session_id: str,
+        cancellable: CancellableQuery,
+    ) -> AsyncGenerator[dict, None]:
+        """Process a question through the pipeline with progress events."""
+        session_manager = get_session_manager()
+        generator = get_sql_generator()
+        history = session_manager.get_conversation_history(
+            session_id, max_messages=6,
+        )
+
+        def _progress(step: str, message: str, pct: int) -> dict:
+            return {"event": "progress", "step": step,
+                    "message": message, "progress": pct}
+
+        def _complete(resp: ChatResponse) -> dict:
+            return {"event": "complete", "data": resp.model_dump()}
+
+        def _fail(answer: str, **kw: Any) -> dict:
+            return _complete(ChatResponse(
+                session_id=session_id, answer=answer, **kw,
+            ))
+
+        # Step 1: Generate SQL via LLM
+        yield _progress("generating_sql", "Generating SQL from your question...", 10)
+        cancellable.check_cancelled()
+        gen = await asyncio.to_thread(generator.generate, question, history)
+
+        # Step 2: Clarification check
+        if gen.needs_clarification:
+            yield _fail(
+                gen.clarification_question or "Could you please clarify?",
+                needs_clarification=True,
+                clarification_question=gen.clarification_question,
+                assumptions=gen.assumptions, confidence=gen.confidence,
+            )
+            return
+
+        sql = gen.sql
+        if not sql:
+            yield _fail("I couldn't generate a SQL query. Could you rephrase?",
+                         error="No SQL generated", confidence="low")
+            return
+
+        # Step 3: Validate SQL with guard
+        yield _progress("validating", "Validating query safety...", 30)
+        cancellable.check_cancelled()
+        val = validate_sql(sql=sql, catalog=self.catalog,
+                           max_rows=self._settings.sql_max_rows,
+                           strict_catalog_check=True)
+
+        if not val.valid:
+            yield _progress("retrying_validation", "Fixing validation issues...", 35)
+            fixed = await self._streaming_retry(
+                question, sql, val.error or "Unknown error", history, cancellable,
+            )
+            if fixed:
+                sql, gen = fixed
+            else:
+                yield _fail(f"I couldn't generate a safe query. Error: {val.error}",
+                            sql=sql, error=val.error,
+                            assumptions=gen.assumptions, confidence="low")
+                return
+
+        # Step 4: Complexity analysis
+        complexity = analyze_query_complexity(sql)
+        complexity_warning = (
+            format_complexity_warning(complexity)
+            if complexity.level in ("HIGH", "CRITICAL") else None
+        )
+
+        # Step 5: EXPLAIN validation (dry-run)
+        yield _progress("explaining", "Checking query plan...", 45)
+        cancellable.check_cancelled()
+        is_valid, explain_err = await asyncio.to_thread(
+            cancellable.explain, sql, 5000,
+        )
+
+        if not is_valid:
+            yield _progress("retrying_plan", "Fixing query plan issues...", 50)
+            fixed = await self._streaming_retry(
+                question, sql, explain_err or "Runtime validation failed",
+                history, cancellable, run_explain=True,
+            )
+            if fixed:
+                sql, gen = fixed
+            else:
+                yield _fail(f"I couldn't execute the query. Error: {explain_err}",
+                            sql=sql, error=explain_err,
+                            assumptions=gen.assumptions, confidence="low")
+                return
+
+        # Step 6: Execute query
+        exec_timeout = max(
+            complexity.suggested_timeout_ms,
+            self._settings.sql_statement_timeout_ms,
+        )
+        yield _progress("executing", "Running query on database...", 60)
+
+        result = None
+        try:
+            result = await asyncio.to_thread(
+                cancellable.execute, sql, None,
+                exec_timeout, self._settings.sql_max_rows,
+            )
+        except QueryCancelledError:
+            raise
+        except Exception as exec_err:
+            error_str = str(exec_err)
+            retryable = (
+                "timeout" in error_str.lower()
+                or "canceling statement" in error_str.lower()
+                or any(x in error_str.lower() for x in [
+                    "syntax error", "does not exist", "type", "invalid",
+                    "division by zero", "out of range", "cannot cast", "ambiguous",
+                ])
+            )
+            if retryable:
+                yield _progress("retrying_execution", "Retrying with optimized query...", 65)
+                fixed = await self._streaming_retry(
+                    question, sql, f"Query execution failed: {error_str}",
+                    history, cancellable, run_explain=True,
+                )
+                if fixed:
+                    try:
+                        result = await asyncio.to_thread(
+                            cancellable.execute, fixed[0], None,
+                            self._settings.sql_statement_timeout_ms,
+                            self._settings.sql_max_rows,
+                        )
+                        sql, gen = fixed
+                    except QueryCancelledError:
+                        raise
+                    except Exception as retry_err:
+                        yield _fail(f"I couldn't execute the query. Error: {retry_err}",
+                                    sql=fixed[0], error=str(retry_err),
+                                    assumptions=fixed[1].assumptions, confidence="low")
+                        return
+
+            if result is None:
+                yield _fail(f"I couldn't execute the query. Error: {exec_err}",
+                            sql=sql, error=error_str,
+                            assumptions=gen.assumptions,
+                            concepts_used=gen.concepts_used, confidence="low")
+                return
+
+        # Step 7: Sanity checks
+        yield _progress("sanity_check", "Validating results...", 80)
+        sanity_results = run_sanity_checks(result, gen.validation_checks)
+        failed_checks = [c for c in sanity_results if not c.passed]
+
+        # Step 8: Format answer via LLM
+        yield _progress("formatting", "Preparing your answer...", 90)
+        cancellable.check_cancelled()
+        answer = await asyncio.to_thread(
+            self._format_answer_impl, question, sql, result,
+            gen.assumptions, gen.concepts_used, failed_checks,
+        )
+
+        if complexity_warning:
+            answer = f"{complexity_warning}\n\n{answer}"
+
+        response = ChatResponse(
+            session_id=session_id, answer=answer, sql=sql,
+            assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+            confidence=gen.confidence, sanity_checks=sanity_results,
+            query_result=result,
+        )
+        yield _complete(response)
 
 
 # Global orchestrator instance

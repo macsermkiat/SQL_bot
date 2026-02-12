@@ -8,6 +8,7 @@ Database connection pool with safety features.
 
 from __future__ import annotations
 
+import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Generator
@@ -168,6 +169,128 @@ class Database:
                 pass
             finally:
                 self._pool = None
+
+
+class QueryCancelledError(Exception):
+    """Raised when a query is cancelled by the user."""
+
+
+class CancellableQuery:
+    """Wraps database operations with cancellation support.
+
+    Usage:
+        cq = CancellableQuery(get_db())
+        # From another thread/coroutine: cq.cancel()
+        result = cq.execute(sql)  # Raises QueryCancelledError if cancelled
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+        self._lock = threading.Lock()
+        self._active_conn: psycopg.Connection | None = None
+        self._cancelled = False
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancelled
+
+    def cancel(self) -> None:
+        """Cancel any active query. Thread-safe."""
+        with self._lock:
+            self._cancelled = True
+            conn = self._active_conn
+        if conn is not None:
+            try:
+                conn.cancel()
+            except Exception:
+                pass
+
+    def check_cancelled(self) -> None:
+        """Raise QueryCancelledError if cancelled."""
+        if self._cancelled:
+            raise QueryCancelledError("Query cancelled by user")
+
+    def execute(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+        max_rows: int | None = None,
+    ) -> QueryResult:
+        """Execute query with cancellation support."""
+        self.check_cancelled()
+
+        settings = get_settings()
+        timeout_ms = timeout_ms or settings.sql_statement_timeout_ms
+        max_rows = max_rows or settings.sql_max_rows
+
+        start_time = time.perf_counter()
+
+        with self._db.connection() as conn:
+            with self._lock:
+                self._active_conn = conn
+            try:
+                self.check_cancelled()
+                conn.execute(f"SET statement_timeout = {int(timeout_ms)}")
+
+                with conn.cursor() as cur:
+                    if not params:
+                        escaped_sql = sql.replace("%", "%%")
+                        cur.execute(escaped_sql)
+                    else:
+                        cur.execute(sql, params)
+
+                    rows_raw = cur.fetchmany(max_rows + 1)
+                    truncated = len(rows_raw) > max_rows
+                    if truncated:
+                        rows_raw = rows_raw[:max_rows]
+
+                    columns = (
+                        [desc.name for desc in cur.description]
+                        if cur.description
+                        else []
+                    )
+                    rows = [list(row.values()) for row in rows_raw]
+            finally:
+                with self._lock:
+                    self._active_conn = None
+
+        execution_time = (time.perf_counter() - start_time) * 1000
+        self.check_cancelled()
+
+        return QueryResult(
+            columns=columns,
+            rows=rows,
+            row_count=len(rows),
+            truncated=truncated,
+            execution_time_ms=round(execution_time, 2),
+        )
+
+    def explain(self, sql: str, timeout_ms: int = 5000) -> tuple[bool, str | None]:
+        """Validate SQL with EXPLAIN, with cancellation support."""
+        self.check_cancelled()
+
+        try:
+            with self._db.connection() as conn:
+                with self._lock:
+                    self._active_conn = conn
+                try:
+                    conn.execute(
+                        f"SET statement_timeout = '{int(timeout_ms)}ms'"
+                    )
+                    conn.execute(f"EXPLAIN {sql}")
+                finally:
+                    with self._lock:
+                        self._active_conn = None
+
+            return (True, None)
+        except QueryCancelledError:
+            raise
+        except Exception as e:
+            error_str = str(e)
+            if "DETAIL:" in error_str:
+                error_str = error_str.split("CONTEXT:")[0].strip()
+            return (False, error_str)
 
 
 # Global database instance

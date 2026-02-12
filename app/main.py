@@ -4,6 +4,7 @@ FastAPI application with authentication, rate limiting, and security headers.
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,6 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import StreamingResponse
 
 from app.auth import (
     create_session_token,
@@ -21,7 +23,7 @@ from app.auth import (
 )
 from app.chat import get_orchestrator
 from app.config import get_settings
-from app.db import get_db
+from app.db import CancellableQuery, get_db
 from app.models import ChatRequest, ChatResponse, UserInfo
 from app.rate_limit import get_login_limiter
 
@@ -200,6 +202,66 @@ async def chat(request: ChatRequest, user: UserInfo = Depends(require_auth)):
     except Exception as e:
         logger.exception("Chat error for user %s", user.email)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(
+    request: ChatRequest,
+    user: UserInfo = Depends(require_auth),
+):
+    """Handle chat message with streaming progress events (SSE)."""
+    orchestrator = get_orchestrator()
+    cancellable = CancellableQuery(get_db())
+
+    async def event_generator():
+        try:
+            async for event in orchestrator.handle_message_streaming(
+                request, cancellable,
+            ):
+                event_type = event.get("event", "progress")
+
+                if event_type == "progress":
+                    payload = {
+                        "step": event.get("step", ""),
+                        "message": event.get("message", ""),
+                        "progress": event.get("progress", 0),
+                    }
+                elif event_type == "complete":
+                    payload = event.get("data", {})
+                    if user.role != "super_user":
+                        payload.pop("sql", None)
+                        payload.pop("query_result", None)
+                        payload.pop("sanity_checks", None)
+                elif event_type == "cancelled":
+                    payload = {
+                        "message": event.get("message", "Query cancelled"),
+                    }
+                elif event_type == "error":
+                    payload = {
+                        "message": event.get("message", "Unknown error"),
+                    }
+                else:
+                    payload = event
+
+                data = json.dumps(
+                    payload, ensure_ascii=False, default=str,
+                )
+                yield f"event: {event_type}\ndata: {data}\n\n"
+        except Exception as e:
+            logger.exception("Streaming error for user %s", user.email)
+            err = json.dumps({"message": "Internal server error"})
+            yield f"event: error\ndata: {err}\n\n"
+        finally:
+            cancellable.cancel()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/health")

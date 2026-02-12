@@ -616,7 +616,87 @@ canvas#starfield {
 }
 
 /* ================================================================
-   LOADING INDICATOR
+   STOP BUTTON
+   ================================================================ */
+
+.stop-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(135deg, var(--danger), #b91c1c);
+    color: white;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: box-shadow 0.3s, transform 0.15s;
+    letter-spacing: 0.02em;
+}
+
+.stop-button:hover {
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+    transform: translateY(-1px);
+}
+
+.stop-button:active {
+    transform: translateY(0);
+}
+
+/* ================================================================
+   PROGRESS INDICATOR
+   ================================================================ */
+
+.progress-content {
+    padding: 1rem 1.25rem;
+}
+
+.progress-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.progress-spinner {
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 2px solid rgba(0, 212, 255, 0.2);
+    border-top-color: var(--accent-cyan);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.progress-text {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    transition: opacity 0.15s;
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+    border-radius: 2px;
+    transition: width 0.4s ease;
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+}
+
+/* ================================================================
+   LOADING INDICATOR (legacy fallback)
    ================================================================ */
 
 .loading {

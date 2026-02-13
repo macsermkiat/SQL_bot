@@ -474,6 +474,14 @@ class StagedExecutor:
             cte = next(c for c in ctes if c.name == leaf_name)
             stage_sql = cte.body
 
+            # Skip CTEs that are already VALUES (pre-materialized by optimizer)
+            stripped_body = stage_sql.strip().upper()
+            if stripped_body.startswith("VALUES"):
+                logger.debug(
+                    "Stage %s: already a VALUES clause, skipping", leaf_name,
+                )
+                continue
+
             logger.info("Executing stage: %s", leaf_name)
             start = time.perf_counter()
 
@@ -501,9 +509,16 @@ class StagedExecutor:
             total_stage_time += elapsed
 
             if stage_result_raw.row_count <= max_materialize_rows:
+                # Use CTE's explicit column list if available (cursor
+                # column names for VALUES bodies are generic "column1" etc.)
+                columns = (
+                    cte.col_list
+                    if cte.col_list
+                    else tuple(stage_result_raw.columns)
+                )
                 materialized[leaf_name] = StageResult(
                     name=leaf_name,
-                    columns=tuple(stage_result_raw.columns),
+                    columns=columns,
                     rows=tuple(
                         tuple(r) for r in stage_result_raw.rows
                     ),

@@ -71,13 +71,15 @@ class Database:
             QueryResult with columns, rows, timing
         """
         settings = get_settings()
-        timeout_ms = timeout_ms or settings.sql_statement_timeout_ms
-        max_rows = max_rows or settings.sql_max_rows
+        if timeout_ms is None:
+            timeout_ms = settings.sql_statement_timeout_ms
+        if max_rows is None:
+            max_rows = settings.sql_max_rows
 
         start_time = time.perf_counter()
 
         with self.connection() as conn:
-            # Set statement timeout for this query
+            # Set statement timeout for this query (0 = no timeout)
             conn.execute(f"SET statement_timeout = {timeout_ms}")
 
             with conn.cursor() as cur:
@@ -221,8 +223,10 @@ class CancellableQuery:
         self.check_cancelled()
 
         settings = get_settings()
-        timeout_ms = timeout_ms or settings.sql_statement_timeout_ms
-        max_rows = max_rows or settings.sql_max_rows
+        if timeout_ms is None:
+            timeout_ms = settings.sql_statement_timeout_ms
+        if max_rows is None:
+            max_rows = settings.sql_max_rows
 
         start_time = time.perf_counter()
 

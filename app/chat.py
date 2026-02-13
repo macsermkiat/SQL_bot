@@ -277,11 +277,16 @@ class ChatOrchestrator:
         sql = self._pre_execute_small_ctes(sql, db)
 
         # Step 8: Execute query (with retry on errors)
-        # Use complexity-based timeout, capped at max
-        execution_timeout = min(
-            max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms),
-            self._settings.sql_max_timeout_ms,
-        )
+        # Use complexity-based timeout, capped at max (0 = no timeout)
+        if self._settings.sql_statement_timeout_ms == 0:
+            execution_timeout = 0
+        else:
+            base = max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms)
+            execution_timeout = (
+                min(base, self._settings.sql_max_timeout_ms)
+                if self._settings.sql_max_timeout_ms > 0
+                else base
+            )
         logger.info(f"Executing with timeout: {execution_timeout}ms (complexity={complexity.level})")
 
         result: QueryResult | None = None
@@ -822,11 +827,16 @@ class ChatOrchestrator:
             self._pre_execute_small_ctes, sql, db,
         )
 
-        # Step 7: Execute query
-        exec_timeout = min(
-            max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms),
-            self._settings.sql_max_timeout_ms,
-        )
+        # Step 7: Execute query (0 = no timeout)
+        if self._settings.sql_statement_timeout_ms == 0:
+            exec_timeout = 0
+        else:
+            base = max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms)
+            exec_timeout = (
+                min(base, self._settings.sql_max_timeout_ms)
+                if self._settings.sql_max_timeout_ms > 0
+                else base
+            )
         logger.info(f"Executing with timeout: {exec_timeout}ms (complexity={complexity.level})")
         yield _progress("executing", f"Running query on database ({complexity.level} complexity)...", 60)
 

@@ -156,6 +156,7 @@ Common mistakes to avoid:
 - NULL comparisons: Use "col IS NULL" not "col = NULL"
 - Case sensitivity: Text comparisons are case-sensitive; use LOWER() for case-insensitive matching
 - For drug/medicine searches in MEDITEMDIS: The name column is "medname" (NOT "name"). Also available: "chemname", "prscname", "tradename" (all [text]). "brandname" is [numeric] - never use LIKE on it. Join via PRSCDT.meditem = MEDITEMDIS.meditem.
+- **NEVER fabricate or hardcode drug codes, lab codes, or any reference table values.** You do NOT know what values exist in the database. ALWAYS query the reference table dynamically using LIKE or = to find valid codes. See the DRUG LOOKUP PATTERN below.
 
 ## TABLE DISCOVERY AND USAGE
 
@@ -256,6 +257,37 @@ FROM "KCMH_HIS"."PTDIAG" d
 INNER JOIN target_codes tc ON d."icd10" = tc."icd10"
 WHERE d."vstdate" >= '2024-01-01'
 ```
+
+**DRUG/MEDICATION LOOKUP PATTERN (CRITICAL - NEVER FABRICATE DRUG CODES):**
+When the user asks about drugs/medications, ALWAYS query MEDITEMDIS to find valid codes.
+NEVER hardcode meditem values or drug names in a VALUES clause -- you do NOT know what
+values exist in the database. Use a CTE to look up drugs dynamically:
+
+```sql
+-- Find antihypertensive drugs: search by drug class keywords
+WITH antihypertensive_drugs AS (
+    SELECT DISTINCT "meditem"
+    FROM "KCMH_HIS"."MEDITEMDIS"
+    WHERE LOWER("medname") LIKE '%amlodipine%'
+       OR LOWER("medname") LIKE '%losartan%'
+       OR LOWER("medname") LIKE '%enalapril%'
+       OR LOWER("chemname") LIKE '%amlodipine%'
+       OR LOWER("chemname") LIKE '%losartan%'
+),
+patient_drug_count AS (
+    SELECT p."hn", COUNT(DISTINCT pd."meditem") AS drug_count
+    FROM "KCMH_HIS"."PRSC" p
+    INNER JOIN "KCMH_HIS"."PRSCDT" pd ON p."prscno" = pd."prscno"
+    INNER JOIN antihypertensive_drugs ad ON pd."meditem" = ad."meditem"
+    WHERE p."prscdate" >= '2025-01-01' AND p."prscdate" < '2026-01-01'
+    GROUP BY p."hn"
+)
+SELECT ...
+```
+
+For drug class searches (e.g., "antihypertensive drugs"), search by common generic names
+(amlodipine, losartan, enalapril, hydrochlorothiazide, atenolol, metoprolol, etc.) using
+LIKE on "medname" or "chemname". List the drug class assumption in your response.
 
 **EXISTS Pattern for Counting Distinct Patients with Conditions:**
 When counting distinct patients matching criteria from different tables, use EXISTS:

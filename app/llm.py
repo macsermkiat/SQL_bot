@@ -155,7 +155,7 @@ Common mistakes to avoid:
 - For unknown status values, omit the filter or ask for clarification
 - NULL comparisons: Use "col IS NULL" not "col = NULL"
 - Case sensitivity: Text comparisons are case-sensitive; use LOWER() for case-insensitive matching
-- For drug/medicine searches: Always search multiple name fields (check column types - only use LIKE on [text] columns)
+- For drug/medicine searches in MEDITEMDIS: The name column is "medname" (NOT "name"). Also available: "chemname", "prscname", "tradename" (all [text]). "brandname" is [numeric] - never use LIKE on it. Join via PRSCDT.meditem = MEDITEMDIS.meditem.
 
 ## TABLE DISCOVERY AND USAGE
 

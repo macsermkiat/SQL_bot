@@ -103,6 +103,26 @@ liver_function:
   tables:
     - "LABEXM"
 
+medication_lookup:
+  description: "Drug/medication lookup from MEDITEMDIS table"
+  tables:
+    - "MEDITEMDIS"
+    - "PRSCDT"
+    - "PRSC"
+  notes: >
+    CRITICAL column mapping for MEDITEMDIS (do NOT guess column names):
+    meditem = medication item code (PK, numeric). Join via PRSCDT.meditem.
+    medname = drug/medication name (ชื่อยา/เวชภัณฑ์) [text] - PRIMARY search field.
+    medcode = drug code [text].
+    chemname = chemical name (ชื่อทางเคมี) [text].
+    prscname = prescription name (ชื่อสั่งยา) [text].
+    tradename = trade name (ชื่อการค้า) [text].
+    strength = drug strength [text].
+    printnmth = Thai drug name [text].
+    WARNING: There is NO column called "name" in MEDITEMDIS. Use "medname" for drug name searches.
+    WARNING: brandname is NUMERIC - do NOT use LIKE on it.
+    Prescription chain: PRSC (prescription header, has hn/prscdate) -> PRSCDT (prescription detail, has meditem) -> MEDITEMDIS (drug master, has medname).
+
 opd_visit:
   description: "Outpatient department visit"
   tables:

@@ -1,18 +1,29 @@
 """
 SQL query optimizer for preventing timeout-causing patterns.
 
-Primary optimization: Merge Duplicate Table Scans
-When multiple CTEs scan the same large table with different date ranges,
-merge them into a single scan with per-CTE date range filters.
+Primary optimization: Flatten Leaf CTE Scans
+When leaf CTEs scan large tables with date range filters, they create
+CTE optimization fences in PostgreSQL (materialized before downstream
+filters apply). By flattening these into downstream CTEs, PostgreSQL
+can freely choose JOIN order and push small-table filters through.
 
-Example - BEFORE (scans LVST twice -> timeout):
-    WITH lvst_2024 AS (SELECT "labno", "hn" FROM LVST WHERE date >= '2024-01-01' AND date < '2025-01-01'),
-         lvst_2025 AS (SELECT "labno", "hn" FROM LVST WHERE date >= '2025-01-01' AND date < '2026-01-01')
+Example - BEFORE (CTE fence forces sequential scan of LVST):
+    WITH lvst_2024 AS (
+        SELECT "labno", "hn" FROM LVST WHERE date range
+    ),
+    hba1c AS (
+        SELECT ... FROM lvst_2024 l24
+        JOIN LVSTEXM lexm ON l24."labno" = lexm."labno"
+        JOIN labcodes hl ON lexm."labexm" = hl."labexm"
+    )
 
-AFTER (single scan, ~2x faster):
-    WITH _lvst_merged AS (SELECT "labno", "hn", "lvstdate" FROM LVST WHERE date >= '2024-01-01' AND date < '2026-01-01'),
-         lvst_2024 AS (SELECT "labno", "hn" FROM _lvst_merged WHERE date >= '2024-01-01' AND date < '2025-01-01'),
-         lvst_2025 AS (SELECT "labno", "hn" FROM _lvst_merged WHERE date >= '2025-01-01' AND date < '2026-01-01')
+AFTER (no fence, PG starts from small labcodes table):
+    WITH hba1c AS (
+        SELECT ... FROM LVST l24
+        JOIN LVSTEXM lexm ON l24."labno" = lexm."labno"
+        JOIN labcodes hl ON lexm."labexm" = hl."labexm"
+        WHERE l24."lvstdate" >= '2024-01-01' AND l24."lvstdate" < '2025-01-01'
+    )
 """
 
 from __future__ import annotations
@@ -47,7 +58,6 @@ _DATE_RANGE_RE = re.compile(
 )
 
 # Match: FROM "KCMH_HIS"."TABLE" [alias]
-# Alias must not be a SQL keyword (WHERE, JOIN, INNER, LEFT, ON, etc.)
 _SQL_KEYWORDS = frozenset({
     "WHERE", "JOIN", "INNER", "LEFT", "RIGHT", "OUTER", "CROSS", "FULL",
     "ON", "AND", "OR", "NOT", "ORDER", "GROUP", "HAVING", "LIMIT",
@@ -72,7 +82,7 @@ _SELECT_RE = re.compile(
 
 @dataclass(frozen=True)
 class _LeafInfo:
-    """Metadata extracted from a leaf CTE for merge analysis."""
+    """Metadata extracted from a leaf CTE for optimization."""
 
     base_table: str  # e.g. "LVST"
     table_alias: str | None  # e.g. "lv" or None
@@ -83,12 +93,13 @@ class _LeafInfo:
     select_clause: str  # e.g. '"labno", "hn"'
     is_distinct: bool
     fingerprint: str  # normalized body for grouping
+    is_simple_scan: bool  # no JOINs, no subqueries
 
 
 def _analyze_leaf(body: str) -> _LeafInfo | None:
-    """Extract merge-relevant metadata from a leaf CTE body.
+    """Extract optimization-relevant metadata from a leaf CTE body.
 
-    Returns None if the CTE is not a candidate for merging
+    Returns None if the CTE is not a candidate for optimization
     (no date range filter, no recognizable table, etc.).
     """
     table_m = _FROM_TABLE_RE.search(body)
@@ -116,6 +127,14 @@ def _analyze_leaf(body: str) -> _LeafInfo | None:
     fp = re.sub(r"\d{4}-\d{2}-\d{2}", "____", body)
     fp = " ".join(fp.split())
 
+    # Check if this is a simple scan (no JOINs, no subqueries, no GROUP BY)
+    upper = body.upper()
+    is_simple = (
+        not re.search(r"\bJOIN\b", upper)
+        and not re.search(r"\(\s*SELECT\b", upper)
+        and not re.search(r"\bGROUP\s+BY\b", upper)
+    )
+
     return _LeafInfo(
         base_table=table_m.group(1),
         table_alias=table_alias,
@@ -126,49 +145,153 @@ def _analyze_leaf(body: str) -> _LeafInfo | None:
         select_clause=select_m.group(2).strip(),
         is_distinct=bool(select_m.group(1)),
         fingerprint=fp,
+        is_simple_scan=is_simple,
     )
 
 
 # ---------------------------------------------------------------------------
-# Core optimizer
+# Flatten optimization (primary strategy)
 # ---------------------------------------------------------------------------
 
 
-def optimize_query(sql: str) -> str | None:
-    """Optimize SQL by merging CTEs that scan the same table with different date ranges.
+def _flatten_from_reference(
+    leaf_name: str,
+    leaf_info: _LeafInfo,
+    downstream_body: str,
+) -> str | None:
+    """Replace FROM leaf_name with FROM base_table and add date conditions.
 
-    When leaf CTEs (no inter-CTE dependencies) scan the same base table
-    and differ only in their date range, this function:
-    1. Creates a merged CTE that scans the table once with the combined range
-    2. Replaces each original CTE with a lightweight filter on the merged CTE
-
-    This prevents the most common timeout pattern: scanning huge tables
-    (LVST, OVST, IPT) multiple times for different periods.
-
-    Returns:
-        Optimized SQL string, or None if no optimization was possible.
+    Transforms:
+        FROM lvst_2024 l24  -->  FROM "KCMH_HIS"."LVST" l24
+    And injects:
+        WHERE l24."lvstdate" >= '2024-01-01' AND l24."lvstdate" < '2025-01-01'
     """
-    parsed = parse_ctes(sql)
-    if not parsed:
+    # Find FROM leaf_name [alias] in the downstream body
+    from_re = re.compile(
+        rf"\bFROM\s+{re.escape(leaf_name)}\b(?:\s+(\w+))?",
+        re.IGNORECASE,
+    )
+    m = from_re.search(downstream_body)
+    if not m:
         return None
 
-    ctes, final_query = parsed
-    if len(ctes) < 3:  # need at least 2 duplicate + 1 other CTE
+    # Get the alias used for the leaf CTE in the downstream query
+    alias = m.group(1)
+    if alias and alias.upper() in _SQL_KEYWORDS:
+        alias = None
+    if not alias:
+        # Generate a short alias from the table name
+        alias = leaf_info.base_table.lower()[:3]
+
+    # Replace FROM clause with actual base table
+    new_from = f'FROM "KCMH_HIS"."{leaf_info.base_table}" {alias}'
+    new_body = downstream_body[: m.start()] + new_from + downstream_body[m.end() :]
+
+    # Build date conditions with the downstream alias
+    date_conds = (
+        f'{alias}."{leaf_info.date_col}" >= \'{leaf_info.date_start}\'\n'
+        f'      AND {alias}."{leaf_info.date_col}" < \'{leaf_info.date_end}\''
+    )
+
+    # Inject conditions into existing WHERE clause
+    where_m = re.search(r"\bWHERE\b\s+", new_body, re.IGNORECASE)
+    if where_m:
+        # Insert date conditions at the start of WHERE
+        insert_pos = where_m.end()
+        new_body = (
+            new_body[:insert_pos]
+            + date_conds
+            + "\n      AND "
+            + new_body[insert_pos:]
+        )
+    else:
+        new_body += f"\n    WHERE {date_conds}"
+
+    return new_body
+
+
+def _try_flatten(
+    ctes: list[ParsedCTE],
+    final_query: str,
+    leaf_info: dict[str, _LeafInfo],
+    deps: dict[str, frozenset[str]],
+) -> str | None:
+    """Flatten simple-scan leaf CTEs into downstream CTEs.
+
+    Removes the CTE optimization fence so PostgreSQL can freely choose
+    JOIN order and push small-table filters into the large table scan.
+
+    Returns optimized SQL or None if no flattening was possible.
+    """
+    flattened: set[str] = set()
+    new_ctes = list(ctes)
+
+    for leaf_name, info in leaf_info.items():
+        # Only flatten simple scans (no JOINs, no subqueries)
+        if not info.is_simple_scan:
+            continue
+
+        leaf_used_in_downstream = False
+
+        for i, cte in enumerate(new_ctes):
+            if cte.name == leaf_name:
+                continue
+            # Skip if this CTE doesn't depend on the leaf
+            if leaf_name not in deps.get(cte.name, frozenset()):
+                continue
+
+            new_body = _flatten_from_reference(leaf_name, info, cte.body)
+            if new_body:
+                new_ctes[i] = ParsedCTE(
+                    name=cte.name, body=new_body, col_list=cte.col_list,
+                )
+                leaf_used_in_downstream = True
+
+        if leaf_used_in_downstream:
+            # Check if the leaf is also referenced in the final query
+            leaf_in_final = bool(
+                re.search(rf"\b{re.escape(leaf_name)}\b", final_query)
+            )
+            if not leaf_in_final:
+                flattened.add(leaf_name)
+
+    if not flattened:
         return None
 
-    deps = analyze_dependencies(ctes)
-    leaves = find_leaf_ctes(deps)
-    if len(leaves) < 2:
+    # Remove flattened leaf CTEs
+    new_ctes = [c for c in new_ctes if c.name not in flattened]
+
+    if not new_ctes:
         return None
 
-    # Analyze each leaf CTE
-    leaf_info: dict[str, _LeafInfo] = {}
-    for name in leaves:
-        cte = next(c for c in ctes if c.name == name)
-        info = _analyze_leaf(cte.body)
-        if info:
-            leaf_info[name] = info
+    result = _rebuild_sql(new_ctes, final_query)
 
+    logger.info(
+        "Optimizer: flattened %d leaf CTEs (%s) into downstream CTEs",
+        len(flattened),
+        ", ".join(sorted(flattened)),
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Merge optimization (fallback strategy)
+# ---------------------------------------------------------------------------
+
+
+def _try_merge(
+    ctes: list[ParsedCTE],
+    final_query: str,
+    leaf_info: dict[str, _LeafInfo],
+) -> str | None:
+    """Merge duplicate table scans into a single scan with wrappers.
+
+    Fallback when flattening is not applicable (leaf CTEs used in final query
+    or have complex bodies).
+
+    Returns optimized SQL or None.
+    """
     # Group by fingerprint (identical bodies except for date values)
     groups: dict[str, list[tuple[str, _LeafInfo]]] = defaultdict(list)
     for name, info in leaf_info.items():
@@ -181,29 +304,24 @@ def optimize_query(sql: str) -> str | None:
 
     # Build replacement CTEs
     replaced: set[str] = set()
-    # Map: first replaced CTE name -> [merged_cte, wrapper1, wrapper2, ...]
     inserts: dict[str, list[ParsedCTE]] = {}
 
     for _, members in merge_groups.items():
         first_name, first_info = members[0]
 
-        # Generate unique merged CTE name
         merged_name = f"_{first_info.base_table.lower()}_merged"
         existing_names = {c.name for c in ctes}
         while merged_name in existing_names:
             merged_name += "_"
 
-        # Combined date range: min(starts) to max(ends)
         starts = sorted(info.date_start for _, info in members)
         ends = sorted(info.date_end for _, info in members)
         combined_start = starts[0]
         combined_end = ends[-1]
 
-        # Build merged CTE body from first member's body
         first_cte = next(c for c in ctes if c.name == first_name)
         merged_body = first_cte.body
 
-        # Step 1: Replace the date range values with combined range
         dm = _DATE_RANGE_RE.search(merged_body)
         if not dm:
             continue
@@ -213,15 +331,13 @@ def optimize_query(sql: str) -> str | None:
             merged_body[: dm.start()]
             + f'{alias_prefix}"{first_info.date_col}" >= \'{combined_start}\''
             + f'\n      AND {alias_prefix}"{first_info.date_col}" < \'{combined_end}\''
-            + merged_body[dm.end() :]
+            + merged_body[dm.end():]
         )
 
-        # Step 2: Add date column to SELECT if not already present
         date_col_quoted = f'"{first_info.date_col}"'
         if date_col_quoted not in first_info.select_clause:
             sm = _SELECT_RE.search(merged_body)
             if sm:
-                # Build the date column reference (with alias if original had one)
                 if first_info.table_alias:
                     date_ref = f'{first_info.table_alias}."{first_info.date_col}"'
                 else:
@@ -234,12 +350,9 @@ def optimize_query(sql: str) -> str | None:
                 )
 
         merged_cte = ParsedCTE(name=merged_name, body=merged_body)
-
-        # Build wrapper CTEs (one per original, filtering on date range)
         new_ctes_for_group: list[ParsedCTE] = [merged_cte]
 
         for name, info in members:
-            # Strip table alias prefixes from select clause for the wrapper
             wrapper_select = info.select_clause
             if info.table_alias:
                 wrapper_select = re.sub(
@@ -247,7 +360,6 @@ def optimize_query(sql: str) -> str | None:
                     "",
                     wrapper_select,
                 )
-
             distinct = "DISTINCT " if info.is_distinct else ""
             wrapper_body = (
                 f"SELECT {distinct}{wrapper_select}\n"
@@ -263,7 +375,6 @@ def optimize_query(sql: str) -> str | None:
     if not replaced:
         return None
 
-    # Rebuild CTE list: insert merged+wrappers where the first replaced CTE was
     new_ctes: list[ParsedCTE] = []
     for cte in ctes:
         if cte.name in inserts:
@@ -271,21 +382,107 @@ def optimize_query(sql: str) -> str | None:
         elif cte.name not in replaced:
             new_ctes.append(cte)
 
-    # Rebuild SQL
+    result = _rebuild_sql(new_ctes, final_query)
+
+    logger.info(
+        "Optimizer: merged %d CTEs scanning %s into single scan",
+        len(replaced),
+        ", ".join(sorted({leaf_info[n].base_table for n in replaced})),
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# SQL rebuilding
+# ---------------------------------------------------------------------------
+
+
+def _rebuild_sql(ctes: list[ParsedCTE], final_query: str) -> str:
+    """Rebuild a full SQL statement from CTEs and final query."""
     cte_parts: list[str] = []
-    for cte in new_ctes:
+    for cte in ctes:
         if cte.col_list:
             col_str = ", ".join(f'"{c}"' for c in cte.col_list)
             cte_parts.append(f"{cte.name} ({col_str}) AS (\n    {cte.body}\n  )")
         else:
             cte_parts.append(f"{cte.name} AS (\n    {cte.body}\n  )")
+    return f'WITH\n  {",\n  ".join(cte_parts)}\n{final_query}'
 
-    optimized = f'WITH\n  {",\n  ".join(cte_parts)}\n{final_query}'
 
-    logger.info(
-        "Optimized: merged %d CTEs scanning %s into single scan",
-        len(replaced),
-        ", ".join(sorted({leaf_info[n].base_table for n in replaced})),
-    )
+# ---------------------------------------------------------------------------
+# Pre-execution of small leaf CTEs
+# ---------------------------------------------------------------------------
 
-    return optimized
+# Tables known to be large (skip pre-execution for these)
+_LARGE_TABLES = frozenset({
+    "LVST", "OVST", "IPT", "OPT", "PRSC", "LVSTEXM",
+    "PTDIAG", "OPDRUG", "IPDRUG", "OVSTEXM", "OVSTDRUG",
+})
+
+_PRE_EXEC_TIMEOUT_MS = 5000  # 5 seconds max per small CTE
+_PRE_EXEC_MAX_ROWS = 500  # Only inline truly small results
+
+
+def is_large_table_scan(body: str) -> bool:
+    """Check if the CTE body scans a known large table."""
+    m = _FROM_TABLE_RE.search(body)
+    if m:
+        return m.group(1) in _LARGE_TABLES
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
+def optimize_query(sql: str) -> str | None:
+    """Optimize SQL by removing CTE optimization fences.
+
+    Strategy 1 (preferred): Flatten simple-scan leaf CTEs into downstream
+    CTEs, allowing PostgreSQL to choose optimal JOIN order.
+
+    Strategy 2 (fallback): Merge duplicate table scans with different date
+    ranges into a single scan.
+
+    Returns:
+        Optimized SQL string, or None if no optimization was possible.
+    """
+    parsed = parse_ctes(sql)
+    if not parsed:
+        return None
+
+    ctes, final_query = parsed
+    if len(ctes) < 2:
+        return None
+
+    deps = analyze_dependencies(ctes)
+    leaves = find_leaf_ctes(deps)
+    if not leaves:
+        return None
+
+    # Analyze each leaf CTE
+    leaf_info: dict[str, _LeafInfo] = {}
+    for name in leaves:
+        cte = next(c for c in ctes if c.name == name)
+        info = _analyze_leaf(cte.body)
+        if info:
+            leaf_info[name] = info
+
+    if not leaf_info:
+        return None
+
+    # Strategy 1: Flatten leaf CTEs into downstream CTEs
+    result = _try_flatten(ctes, final_query, leaf_info, deps)
+    if result:
+        return result
+
+    # Strategy 2: Merge duplicate date range scans
+    merge_groups = defaultdict(list)
+    for name, info in leaf_info.items():
+        merge_groups[info.fingerprint].append((name, info))
+    if any(len(v) >= 2 for v in merge_groups.values()):
+        return _try_merge(ctes, final_query, leaf_info)
+
+    return None

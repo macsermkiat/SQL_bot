@@ -25,8 +25,22 @@ from app.schema_catalog import SchemaCatalog, get_schema_catalog
 from app.db import CancellableQuery, QueryCancelledError, get_db
 from app.llm import get_llm_client
 from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult
-from app.staged_query import MAX_MATERIALIZE_ROWS, STAGE_TIMEOUT_MS, StagedExecutor
-from app.sql_optimizer import optimize_query
+from app.staged_query import (
+    MAX_MATERIALIZE_ROWS,
+    STAGE_TIMEOUT_MS,
+    StageResult,
+    StagedExecutor,
+    analyze_dependencies,
+    find_leaf_ctes,
+    parse_ctes,
+    rebuild_query,
+)
+from app.sql_optimizer import (
+    _PRE_EXEC_MAX_ROWS,
+    _PRE_EXEC_TIMEOUT_MS,
+    is_large_table_scan,
+    optimize_query,
+)
 from app.query_complexity import analyze_query_complexity, format_complexity_warning
 from app.session import get_session_manager
 from app.sql_gen import get_sql_generator
@@ -254,11 +268,13 @@ class ChatOrchestrator:
                     confidence="low",
                 )
 
-        # Step 7: Optimize query (merge duplicate table scans)
+        # Step 7: Optimize query (flatten CTE fences + pre-execute small CTEs)
         optimized = optimize_query(sql)
         if optimized:
-            logger.info("SQL optimizer: merged duplicate table scans")
+            logger.info("SQL optimizer: flattened leaf CTEs")
             sql = optimized
+
+        sql = self._pre_execute_small_ctes(sql, db)
 
         # Step 8: Execute query (with retry on errors)
         # Use complexity-based timeout, capped at max
@@ -413,6 +429,65 @@ class ChatOrchestrator:
             sanity_checks=sanity_results,
             query_result=result,
         )
+
+    def _pre_execute_small_ctes(self, sql: str, db: Any) -> str:
+        """Pre-execute small leaf CTEs and materialize as VALUES.
+
+        Runs BEFORE the main execution to give PostgreSQL better
+        optimization hints (known-size VALUES vs opaque CTE scans).
+        Only targets small reference table lookups (LABEXM, ICD10, etc.).
+        """
+        parsed = parse_ctes(sql)
+        if not parsed:
+            return sql
+
+        ctes, final_query = parsed
+        deps = analyze_dependencies(ctes)
+        leaves = find_leaf_ctes(deps)
+
+        if not leaves:
+            return sql
+
+        materialized: dict[str, StageResult] = {}
+
+        for leaf_name in leaves:
+            cte = next(c for c in ctes if c.name == leaf_name)
+
+            # Skip CTEs that scan known large tables
+            if is_large_table_scan(cte.body):
+                continue
+
+            try:
+                result = db.execute_query(
+                    sql=cte.body,
+                    timeout_ms=_PRE_EXEC_TIMEOUT_MS,
+                    max_rows=_PRE_EXEC_MAX_ROWS + 1,
+                )
+                if result.row_count <= _PRE_EXEC_MAX_ROWS:
+                    materialized[leaf_name] = StageResult(
+                        name=leaf_name,
+                        columns=tuple(result.columns),
+                        rows=tuple(tuple(r) for r in result.rows),
+                        row_count=result.row_count,
+                        execution_time_ms=0,
+                    )
+                    logger.info(
+                        "Pre-executed CTE %s: %d rows (materialized as VALUES)",
+                        leaf_name, result.row_count,
+                    )
+            except Exception as exc:
+                logger.debug("Pre-execution of CTE %s failed: %s", leaf_name, exc)
+                continue
+
+        if not materialized:
+            return sql
+
+        rebuilt = rebuild_query(ctes, materialized, final_query)
+        logger.info(
+            "Pre-executed %d/%d leaf CTEs as VALUES",
+            len(materialized), len(leaves),
+        )
+        return rebuilt
 
     def _retry_with_error_impl(
         self,
@@ -734,11 +809,18 @@ class ChatOrchestrator:
                             assumptions=gen.assumptions, confidence="low")
                 return
 
-        # Step 6: Optimize query (merge duplicate table scans)
+        # Step 6: Optimize query (flatten CTE fences + pre-execute small CTEs)
+        yield _progress("optimizing", "Optimizing query...", 55)
         optimized = optimize_query(sql)
         if optimized:
-            logger.info("SQL optimizer: merged duplicate table scans")
+            logger.info("SQL optimizer: flattened leaf CTEs")
             sql = optimized
+
+        # Pre-execute small reference table CTEs as VALUES
+        db = get_db()
+        sql = await asyncio.to_thread(
+            self._pre_execute_small_ctes, sql, db,
+        )
 
         # Step 7: Execute query
         exec_timeout = min(

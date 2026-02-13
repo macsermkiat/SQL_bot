@@ -890,9 +890,28 @@ class ChatOrchestrator:
                 except Exception as staged_e:
                     logger.warning("Staged execution failed: %s", staged_e)
 
-            # --- LLM retry if staged didn't resolve it ---
+            # --- Auto-fix with countdown if staged didn't resolve it ---
             if result is None and (is_timeout or is_runtime_error):
-                yield _progress("retrying_execution", "Retrying with optimized query...", 70)
+                # Emit countdown events so user sees the error + 5s countdown
+                countdown_secs = 5
+                yield {
+                    "event": "auto_fix_countdown",
+                    "data": {
+                        "error_message": error_str,
+                        "failed_sql": sql,
+                        "seconds_remaining": countdown_secs,
+                    },
+                }
+                for sec in range(countdown_secs - 1, -1, -1):
+                    await asyncio.sleep(1)
+                    cancellable.check_cancelled()
+                    yield {
+                        "event": "auto_fix_countdown",
+                        "data": {"seconds_remaining": sec},
+                    }
+
+                # Now proceed with LLM retry
+                yield _progress("auto_fixing", "Auto-fixing query...", 70)
                 fixed = await self._streaming_retry(
                     question, sql, f"Query execution failed: {error_str}",
                     history, cancellable, run_explain=True,

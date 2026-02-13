@@ -755,6 +755,99 @@ canvas#starfield {
 }
 
 /* ================================================================
+   AUTO-FIX COUNTDOWN
+   ================================================================ */
+
+.auto-fix-banner {
+    background: rgba(234, 179, 8, 0.1);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+    border-radius: 0.5rem;
+    padding: 1rem 1.25rem;
+    animation: fadeInBanner 0.3s ease;
+}
+
+.auto-fix-header {
+    font-weight: 600;
+    color: #fbbf24;
+    font-size: 0.9375rem;
+    margin-bottom: 0.5rem;
+}
+
+.auto-fix-icon {
+    font-size: 1rem;
+    margin-right: 0.25rem;
+}
+
+.auto-fix-error {
+    color: #fca5a5;
+    font-size: 0.8125rem;
+    font-family: "Fira Code", "Cascadia Code", monospace;
+    background: rgba(239, 68, 68, 0.08);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    word-break: break-word;
+}
+
+.auto-fix-sql-details {
+    margin-bottom: 0.75rem;
+}
+
+.auto-fix-sql-details summary {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    cursor: pointer;
+    margin-bottom: 0.25rem;
+}
+
+.auto-fix-sql {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    max-height: 8rem;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.auto-fix-countdown-row {
+    color: #fbbf24;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.auto-fix-seconds {
+    display: inline-block;
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #facc15;
+    min-width: 1.25rem;
+    text-align: center;
+}
+
+.auto-fix-pulse {
+    animation: countdownPulse 0.4s ease;
+}
+
+.auto-fix-fixing {
+    color: var(--accent);
+    font-weight: 600;
+    animation: fadeInBanner 0.3s ease;
+}
+
+@keyframes fadeInBanner {
+    from { opacity: 0; transform: translateY(-0.5rem); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes countdownPulse {
+    0% { transform: scale(1.4); opacity: 0.7; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* ================================================================
    RESPONSIVE
    ================================================================ */
 

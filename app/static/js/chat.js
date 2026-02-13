@@ -21,6 +21,12 @@
         return div.innerHTML.replace(/\n/g, "<br>");
     }
 
+    function escapeHtmlRaw(text) {
+        var div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     function addMessage(role, content, metadata) {
         metadata = metadata || {};
         var messageDiv = document.createElement("div");
@@ -122,6 +128,67 @@
         if (el) el.remove();
     }
 
+    function showAutoFixCountdown(data) {
+        var progressMsg = document.getElementById("progress-message");
+        if (!progressMsg) {
+            addProgressIndicator();
+            progressMsg = document.getElementById("progress-message");
+            if (!progressMsg) return;
+        }
+
+        var content = progressMsg.querySelector(".message-content");
+        if (!content) return;
+
+        var sec = data.seconds_remaining;
+
+        // First event has error_message — build the full banner
+        if (data.error_message) {
+            var errorText = escapeHtml(data.error_message);
+            var sqlHtml = "";
+            if (userRole === "super_user" && data.failed_sql) {
+                sqlHtml =
+                    '<details class="auto-fix-sql-details">' +
+                    "<summary>View failed SQL</summary>" +
+                    '<pre class="auto-fix-sql">' +
+                    escapeHtmlRaw(data.failed_sql) +
+                    "</pre></details>";
+            }
+            content.innerHTML =
+                '<div class="auto-fix-banner">' +
+                '<div class="auto-fix-header">' +
+                '<span class="auto-fix-icon">&#9888;</span>' +
+                " Error detected" +
+                "</div>" +
+                '<div class="auto-fix-error">' + errorText + "</div>" +
+                sqlHtml +
+                '<div class="auto-fix-countdown-row">' +
+                'Auto-fixing in <span class="auto-fix-seconds">' +
+                sec +
+                "</span>..." +
+                "</div>" +
+                "</div>";
+        } else if (sec === 0) {
+            // Countdown finished — transition to fixing state
+            var row = content.querySelector(".auto-fix-countdown-row");
+            if (row) {
+                row.innerHTML =
+                    '<span class="auto-fix-fixing">Fixing now...</span>';
+            }
+        } else {
+            // Subsequent ticks — just update the number
+            var secEl = content.querySelector(".auto-fix-seconds");
+            if (secEl) {
+                secEl.textContent = sec;
+                secEl.classList.remove("auto-fix-pulse");
+                // Force reflow to restart animation
+                void secEl.offsetWidth;
+                secEl.classList.add("auto-fix-pulse");
+            }
+        }
+
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
     function setLoadingState(loading) {
         if (loading) {
             sendButton.style.display = "none";
@@ -198,6 +265,10 @@
                     error: data.error,
                     query_result: data.query_result,
                 });
+                break;
+
+            case "auto_fix_countdown":
+                showAutoFixCountdown(data);
                 break;
 
             case "error":

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
         description="Anthropic API key for Claude",
     )
     claude_model: str = Field(
-        default="claude-sonnet-4-20250514",
+        default="claude-sonnet-4-5",
         description="Claude model to use",
     )
 
@@ -43,12 +43,12 @@ class Settings(BaseSettings):
 
     # Safety settings
     sql_statement_timeout_ms: int = Field(
-        default=30000,
-        description="Default SQL statement timeout in milliseconds (30s)",
+        default=180000,
+        description="Default SQL statement timeout in milliseconds (3 mins)",
     )
     sql_max_timeout_ms: int = Field(
-        default=180000,
-        description="Maximum SQL statement timeout in milliseconds (3 min hard cap)",
+        default=0,
+        description="Maximum SQL statement timeout in milliseconds (unlimit in hard cap)",
     )
     sql_max_rows: int = Field(
         default=2000,

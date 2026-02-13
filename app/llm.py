@@ -285,9 +285,6 @@ patient_drug_count AS (
 SELECT ...
 ```
 
-For drug class searches (e.g., "antihypertensive drugs"), search by common generic names
-(amlodipine, losartan, enalapril, hydrochlorothiazide, atenolol, metoprolol, etc.) using
-LIKE on "medname" or "chemname". List the drug class assumption in your response.
 
 **EXISTS Pattern for Counting Distinct Patients with Conditions:**
 When counting distinct patients matching criteria from different tables, use EXISTS:

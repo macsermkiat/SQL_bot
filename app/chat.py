@@ -681,6 +681,30 @@ class ChatOrchestrator:
                 "message": "An error occurred processing your question. Please try again.",
             }
 
+    async def _emit_countdown(
+        self,
+        error_str: str,
+        sql: str,
+        cancellable: CancellableQuery,
+        countdown_secs: int = 5,
+    ) -> AsyncGenerator[dict, None]:
+        """Yield auto-fix countdown events (5s -> 0) before retry."""
+        yield {
+            "event": "auto_fix_countdown",
+            "data": {
+                "error_message": error_str,
+                "failed_sql": sql,
+                "seconds_remaining": countdown_secs,
+            },
+        }
+        for sec in range(countdown_secs - 1, -1, -1):
+            await asyncio.sleep(1)
+            cancellable.check_cancelled()
+            yield {
+                "event": "auto_fix_countdown",
+                "data": {"seconds_remaining": sec},
+            }
+
     async def _streaming_retry(
         self,
         question: str,
@@ -774,7 +798,11 @@ class ChatOrchestrator:
                            strict_catalog_check=True)
 
         if not val.valid:
-            yield _progress("retrying_validation", "Fixing validation issues...", 35)
+            async for evt in self._emit_countdown(
+                val.error or "Unknown error", sql, cancellable,
+            ):
+                yield evt
+            yield _progress("auto_fixing", "Auto-fixing query...", 35)
             fixed = await self._streaming_retry(
                 question, sql, val.error or "Unknown error", history, cancellable,
             )
@@ -801,7 +829,11 @@ class ChatOrchestrator:
         )
 
         if not is_valid:
-            yield _progress("retrying_plan", "Fixing query plan issues...", 50)
+            async for evt in self._emit_countdown(
+                explain_err or "Runtime validation failed", sql, cancellable,
+            ):
+                yield evt
+            yield _progress("auto_fixing", "Auto-fixing query...", 50)
             fixed = await self._streaming_retry(
                 question, sql, explain_err or "Runtime validation failed",
                 history, cancellable, run_explain=True,
@@ -892,23 +924,10 @@ class ChatOrchestrator:
 
             # --- Auto-fix with countdown if staged didn't resolve it ---
             if result is None and (is_timeout or is_runtime_error):
-                # Emit countdown events so user sees the error + 5s countdown
-                countdown_secs = 5
-                yield {
-                    "event": "auto_fix_countdown",
-                    "data": {
-                        "error_message": error_str,
-                        "failed_sql": sql,
-                        "seconds_remaining": countdown_secs,
-                    },
-                }
-                for sec in range(countdown_secs - 1, -1, -1):
-                    await asyncio.sleep(1)
-                    cancellable.check_cancelled()
-                    yield {
-                        "event": "auto_fix_countdown",
-                        "data": {"seconds_remaining": sec},
-                    }
+                async for evt in self._emit_countdown(
+                    error_str, sql, cancellable,
+                ):
+                    yield evt
 
                 # Now proceed with LLM retry
                 yield _progress("auto_fixing", "Auto-fixing query...", 70)

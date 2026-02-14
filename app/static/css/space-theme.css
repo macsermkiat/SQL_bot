@@ -847,6 +847,16 @@ canvas#starfield {
     100% { transform: scale(1); opacity: 1; }
 }
 
+.auto-fix-retry-note {
+    color: #fbbf24;
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
 /* ================================================================
    RESPONSIVE
    ================================================================ */

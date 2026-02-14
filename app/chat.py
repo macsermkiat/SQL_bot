@@ -512,7 +512,7 @@ class ChatOrchestrator:
             if "Unknown table" in error:
                 available_tables += "\n\nPlease use ONLY these exact table names."
 
-            if "Unknown column" in error:
+            if "Unknown column" in error or "does not exist" in error:
                 for table_name in table_list:
                     if table_name.lower() in failed_sql.lower():
                         table = self.catalog.tables[table_name]
@@ -522,6 +522,10 @@ class ChatOrchestrator:
                                 f"\n\nVerified columns in {table_name}: "
                                 f"{', '.join(cols)}"
                             )
+                available_tables += (
+                    "\n\nCRITICAL: Use ONLY the verified column names above. "
+                    "Do NOT invent or guess column names."
+                )
 
         is_timeout = (
             "timeout" in error.lower()
@@ -587,6 +591,121 @@ class ChatOrchestrator:
         return self._retry_with_error_impl(
             question, failed_sql, error, history,
         )
+
+    def _build_verified_columns_info(
+        self,
+        accumulated_errors: list[dict[str, str]],
+    ) -> str:
+        """Build verified columns info for tables referenced in failed SQL."""
+        if not self.catalog:
+            return "No schema catalog available."
+
+        tables_referenced: set[str] = set()
+        for err in accumulated_errors:
+            sql_text = err.get("sql", "")
+            for table_name in self.catalog.tables:
+                if table_name.lower() in sql_text.lower():
+                    tables_referenced.add(table_name)
+
+        if not tables_referenced:
+            return "No tables identified in failed SQL."
+
+        lines: list[str] = []
+        for table_name in sorted(tables_referenced):
+            table = self.catalog.tables.get(table_name)
+            if not table:
+                continue
+            cols = list(table.columns.keys())
+            if cols:
+                lines.append(f"**{table_name}**: {', '.join(cols)}")
+
+        return "\n".join(lines) if lines else "No column info available."
+
+    def _build_fix_guidance(
+        self,
+        accumulated_errors: list[dict[str, str]],
+    ) -> str:
+        """Build fix guidance based on error patterns."""
+        has_timeout = any(
+            "timeout" in e.get("error", "").lower()
+            or "canceling statement" in e.get("error", "").lower()
+            for e in accumulated_errors
+        )
+        has_column_error = any(
+            "does not exist" in e.get("error", "").lower()
+            for e in accumulated_errors
+        )
+
+        parts = [
+            "No PHI columns in SELECT. No SELECT *. "
+            "Non-aggregate queries need LIMIT.",
+        ]
+
+        if has_timeout:
+            parts.append(
+                "TIMEOUT FIX: "
+                "1) Never scan same large table twice. "
+                "2) Pre-filter reference tables in CTE FIRST. "
+                "3) Use EXISTS for DISTINCT counts. "
+                "4) Date filters as FIRST condition. "
+                "5) Combine UNION into CASE WHEN. "
+                "6) Reduce CTEs."
+            )
+
+        if has_column_error:
+            parts.append(
+                "COLUMN ERROR: You used column names that DO NOT EXIST. "
+                "Check the VERIFIED COLUMNS list and use ONLY those exact names. "
+                "Do NOT guess or invent column names."
+            )
+
+        return "\n\n".join(parts)
+
+    def _retry_with_accumulated_errors(
+        self,
+        question: str,
+        accumulated_errors: list[dict[str, str]],
+        history: list[dict[str, str]],
+    ) -> Any:
+        """Retry SQL generation with all accumulated errors and extended thinking."""
+        generator = get_sql_generator()
+
+        error_history = list(history)
+
+        for i, err in enumerate(accumulated_errors, 1):
+            error_history.append({
+                "role": "assistant",
+                "content": (
+                    f"Attempt {i} SQL (FAILED at {err.get('stage', 'unknown')}):\n"
+                    f"```sql\n{err.get('sql', '')}\n```\n"
+                    f"Error: {err.get('error', 'Unknown')}"
+                ),
+            })
+
+        columns_info = self._build_verified_columns_info(accumulated_errors)
+        fix_guidance = self._build_fix_guidance(accumulated_errors)
+
+        error_history.append({
+            "role": "user",
+            "content": (
+                f"Fix the SQL for this question: {question}\n\n"
+                f"{fix_guidance}\n\n"
+                f"## VERIFIED COLUMNS (CRITICAL - USE ONLY THESE)\n"
+                f"{columns_info}\n\n"
+                f"DO NOT invent column names. If a column is not listed above, "
+                f"it DOES NOT EXIST in the database."
+            ),
+        })
+
+        try:
+            return generator.generate(
+                question,
+                conversation_history=error_history,
+                extended_thinking=True,
+            )
+        except Exception:
+            logger.exception("Retry with accumulated errors failed")
+            return None
 
     def _format_answer_impl(
         self,
@@ -686,9 +805,9 @@ class ChatOrchestrator:
         error_str: str,
         sql: str,
         cancellable: CancellableQuery,
-        countdown_secs: int = 5,
+        countdown_secs: int = 3,
     ) -> AsyncGenerator[dict, None]:
-        """Yield auto-fix countdown events (5s -> 0) before retry."""
+        """Yield auto-fix countdown events (3s -> 0) before retry."""
         yield {
             "event": "auto_fix_countdown",
             "data": {
@@ -705,52 +824,21 @@ class ChatOrchestrator:
                 "data": {"seconds_remaining": sec},
             }
 
-    async def _streaming_retry(
-        self,
-        question: str,
-        sql: str,
-        error: str,
-        history: list[dict[str, str]],
-        cancellable: CancellableQuery,
-        *,
-        run_explain: bool = False,
-    ) -> tuple[str, Any] | None:
-        """Retry SQL generation, validate, and optionally EXPLAIN.
-
-        Returns (new_sql, new_gen_response) on success, or None.
-        """
-        cancellable.check_cancelled()
-        retry = await asyncio.to_thread(
-            self._retry_with_error_impl, question, sql, error, history,
-        )
-        if not retry:
-            return None
-
-        rv = validate_sql(
-            sql=retry.sql,
-            catalog=self.catalog,
-            max_rows=self._settings.sql_max_rows,
-            strict_catalog_check=True,
-        )
-        if not rv.valid:
-            return None
-
-        if run_explain:
-            ok, _ = await asyncio.to_thread(
-                cancellable.explain, retry.sql, 5000,
-            )
-            if not ok:
-                return None
-
-        return (retry.sql, retry)
-
     async def _process_question_streaming(
         self,
         question: str,
         session_id: str,
         cancellable: CancellableQuery,
     ) -> AsyncGenerator[dict, None]:
-        """Process a question through the pipeline with progress events."""
+        """Process a question with up to 5 auto-fix retries and streaming progress.
+
+        Each attempt runs: generate SQL -> validate -> EXPLAIN -> optimize -> execute.
+        On failure at any stage, the error is accumulated and the next attempt
+        starts with a new progress bar in the UI.
+        """
+        MAX_RETRIES = 5
+        total_attempts = MAX_RETRIES + 1
+
         session_manager = get_session_manager()
         generator = get_sql_generator()
         history = session_manager.get_conversation_history(
@@ -769,201 +857,244 @@ class ChatOrchestrator:
                 session_id=session_id, answer=answer, **kw,
             ))
 
-        # Step 1: Generate SQL via LLM
-        yield _progress("generating_sql", "Generating SQL from your question...", 10)
-        cancellable.check_cancelled()
-        gen = await asyncio.to_thread(generator.generate, question, history)
+        accumulated_errors: list[dict[str, str]] = []
+        sql: str | None = None
+        gen: Any = None
+        result: QueryResult | None = None
+        complexity: Any = None
+        complexity_warning: str | None = None
 
-        # Step 2: Clarification check
-        if gen.needs_clarification:
-            yield _fail(
-                gen.clarification_question or "Could you please clarify?",
-                needs_clarification=True,
-                clarification_question=gen.clarification_question,
-                assumptions=gen.assumptions, confidence=gen.confidence,
-            )
-            return
+        for attempt in range(total_attempts):
+            is_retry = attempt > 0
+            attempt_label = f" (attempt {attempt + 1}/{total_attempts})" if is_retry else ""
 
-        sql = gen.sql
-        if not sql:
-            yield _fail("I couldn't generate a SQL query. Could you rephrase?",
-                         error="No SQL generated", confidence="low")
-            return
-
-        # Step 3: Validate SQL with guard
-        yield _progress("validating", "Validating query safety...", 30)
-        cancellable.check_cancelled()
-        val = validate_sql(sql=sql, catalog=self.catalog,
-                           max_rows=self._settings.sql_max_rows,
-                           strict_catalog_check=True)
-
-        if not val.valid:
-            async for evt in self._emit_countdown(
-                val.error or "Unknown error", sql, cancellable,
-            ):
-                yield evt
-            yield _progress("auto_fixing", "Auto-fixing query...", 35)
-            fixed = await self._streaming_retry(
-                question, sql, val.error or "Unknown error", history, cancellable,
-            )
-            if fixed:
-                sql, gen = fixed
-            else:
-                yield _fail(f"I couldn't generate a safe query. Error: {val.error}",
-                            sql=sql, error=val.error,
-                            assumptions=gen.assumptions, confidence="low")
-                return
-
-        # Step 4: Complexity analysis
-        complexity = analyze_query_complexity(sql)
-        complexity_warning = (
-            format_complexity_warning(complexity)
-            if complexity.level in ("HIGH", "CRITICAL") else None
-        )
-
-        # Step 5: EXPLAIN validation (dry-run)
-        yield _progress("explaining", "Checking query plan...", 45)
-        cancellable.check_cancelled()
-        is_valid, explain_err = await asyncio.to_thread(
-            cancellable.explain, sql, 5000,
-        )
-
-        if not is_valid:
-            async for evt in self._emit_countdown(
-                explain_err or "Runtime validation failed", sql, cancellable,
-            ):
-                yield evt
-            yield _progress("auto_fixing", "Auto-fixing query...", 50)
-            fixed = await self._streaming_retry(
-                question, sql, explain_err or "Runtime validation failed",
-                history, cancellable, run_explain=True,
-            )
-            if fixed:
-                sql, gen = fixed
-            else:
-                yield _fail(f"I couldn't execute the query. Error: {explain_err}",
-                            sql=sql, error=explain_err,
-                            assumptions=gen.assumptions, confidence="low")
-                return
-
-        # Step 6: Optimize query (flatten CTE fences + pre-execute small CTEs)
-        yield _progress("optimizing", "Optimizing query...", 55)
-        optimized = optimize_query(sql)
-        if optimized:
-            logger.info("SQL optimizer: flattened leaf CTEs")
-            sql = optimized
-
-        # Pre-execute small reference table CTEs as VALUES
-        db = get_db()
-        sql = await asyncio.to_thread(
-            self._pre_execute_small_ctes, sql, db,
-        )
-
-        # Step 7: Execute query (0 = no timeout)
-        if self._settings.sql_statement_timeout_ms == 0:
-            exec_timeout = 0
-        else:
-            base = max(complexity.suggested_timeout_ms, self._settings.sql_statement_timeout_ms)
-            exec_timeout = (
-                min(base, self._settings.sql_max_timeout_ms)
-                if self._settings.sql_max_timeout_ms > 0
-                else base
-            )
-        logger.info(f"Executing with timeout: {exec_timeout}ms (complexity={complexity.level})")
-        yield _progress("executing", f"Running query on database ({complexity.level} complexity)...", 60)
-
-        result = None
-        try:
-            result = await asyncio.to_thread(
-                cancellable.execute, sql, None,
-                exec_timeout, self._settings.sql_max_rows,
-            )
-        except QueryCancelledError:
-            raise
-        except Exception as exec_err:
-            error_str = str(exec_err)
-            is_timeout = (
-                "timeout" in error_str.lower()
-                or "canceling statement" in error_str.lower()
-            )
-            is_runtime_error = any(x in error_str.lower() for x in [
-                "syntax error", "does not exist", "type", "invalid",
-                "division by zero", "out of range", "cannot cast", "ambiguous",
-            ])
-
-            # --- Staged execution fallback for timeouts ---
-            if is_timeout:
-                try:
-                    staged = StagedExecutor(get_db())
-                    if staged.can_decompose(sql):
-                        yield _progress(
-                            "staged_execution",
-                            "Retrying with staged query execution...",
-                            65,
-                        )
-                        staged_result = await asyncio.to_thread(
-                            staged.execute_staged,
-                            sql,
-                            exec_timeout,
-                            self._settings.sql_max_rows,
-                            STAGE_TIMEOUT_MS,
-                            MAX_MATERIALIZE_ROWS,
-                            cancellable,
-                        )
-                        if staged_result is not None:
-                            result = staged_result.query_result
-                            logger.info(
-                                "Staged execution succeeded: %d stages, %.0fms",
-                                staged_result.stages_executed,
-                                staged_result.total_stage_time_ms,
-                            )
-                except QueryCancelledError:
-                    raise
-                except Exception as staged_e:
-                    logger.warning("Staged execution failed: %s", staged_e)
-
-            # --- Auto-fix with countdown if staged didn't resolve it ---
-            if result is None and (is_timeout or is_runtime_error):
+            # --- On retry: show countdown then signal new attempt ---
+            if is_retry:
+                last_err = accumulated_errors[-1]
                 async for evt in self._emit_countdown(
-                    error_str, sql, cancellable,
+                    last_err.get("error", "Unknown error"),
+                    last_err.get("sql", ""),
+                    cancellable,
                 ):
                     yield evt
 
-                # Now proceed with LLM retry
-                yield _progress("auto_fixing", "Auto-fixing query...", 70)
-                fixed = await self._streaming_retry(
-                    question, sql, f"Query execution failed: {error_str}",
-                    history, cancellable, run_explain=True,
-                )
-                if fixed:
-                    try:
-                        result = await asyncio.to_thread(
-                            cancellable.execute, fixed[0], None,
-                            exec_timeout,
-                            self._settings.sql_max_rows,
-                        )
-                        sql, gen = fixed
-                    except QueryCancelledError:
-                        raise
-                    except Exception as retry_err:
-                        yield _fail(f"I couldn't execute the query. Error: {retry_err}",
-                                    sql=fixed[0], error=str(retry_err),
-                                    assumptions=fixed[1].assumptions, confidence="low")
-                        return
+                yield {
+                    "event": "auto_fix_new_attempt",
+                    "data": {
+                        "attempt": attempt + 1,
+                        "max_attempts": total_attempts,
+                        "error_message": last_err.get("error", "Unknown error"),
+                        "failed_sql": last_err.get("sql", ""),
+                    },
+                }
 
-            if result is None:
-                yield _fail(f"I couldn't execute the query. Error: {exec_err}",
-                            sql=sql, error=error_str,
-                            assumptions=gen.assumptions,
-                            concepts_used=gen.concepts_used, confidence="low")
+            # --- Step 1: Generate SQL ---
+            yield _progress(
+                "generating_sql",
+                f"Generating SQL{attempt_label}...",
+                10,
+            )
+            cancellable.check_cancelled()
+
+            if is_retry:
+                gen = await asyncio.to_thread(
+                    self._retry_with_accumulated_errors,
+                    question, accumulated_errors, history,
+                )
+                if not gen or not gen.sql:
+                    accumulated_errors.append({
+                        "sql": accumulated_errors[-1].get("sql", "") if accumulated_errors else "",
+                        "error": "Auto-fix failed to generate corrected SQL",
+                        "stage": "generation",
+                    })
+                    continue
+            else:
+                gen = await asyncio.to_thread(generator.generate, question, history)
+
+            # Clarification / no SQL - not retryable
+            if gen.needs_clarification:
+                yield _fail(
+                    gen.clarification_question or "Could you please clarify?",
+                    needs_clarification=True,
+                    clarification_question=gen.clarification_question,
+                    assumptions=gen.assumptions, confidence=gen.confidence,
+                )
                 return
 
-        # Step 7: Sanity checks
+            sql = gen.sql
+            if not sql:
+                yield _fail(
+                    "I couldn't generate a SQL query. Could you rephrase?",
+                    error="No SQL generated", confidence="low",
+                )
+                return
+
+            # --- Step 2: Validate SQL with guard ---
+            yield _progress("validating", f"Validating query safety{attempt_label}...", 30)
+            cancellable.check_cancelled()
+            val = validate_sql(
+                sql=sql, catalog=self.catalog,
+                max_rows=self._settings.sql_max_rows,
+                strict_catalog_check=True,
+            )
+
+            if not val.valid:
+                accumulated_errors.append({
+                    "sql": sql,
+                    "error": val.error or "Unknown validation error",
+                    "stage": "validation",
+                })
+                continue
+
+            # --- Step 3: EXPLAIN validation (dry-run) ---
+            yield _progress("explaining", f"Checking query plan{attempt_label}...", 45)
+            cancellable.check_cancelled()
+            is_valid, explain_err = await asyncio.to_thread(
+                cancellable.explain, sql, 5000,
+            )
+
+            if not is_valid:
+                accumulated_errors.append({
+                    "sql": sql,
+                    "error": explain_err or "Runtime validation failed",
+                    "stage": "explain",
+                })
+                continue
+
+            # --- Step 4: Complexity analysis ---
+            complexity = analyze_query_complexity(sql)
+            complexity_warning = (
+                format_complexity_warning(complexity)
+                if complexity.level in ("HIGH", "CRITICAL") else None
+            )
+
+            # --- Step 5: Optimize query ---
+            yield _progress("optimizing", f"Optimizing query{attempt_label}...", 55)
+            optimized = optimize_query(sql)
+            if optimized:
+                logger.info("SQL optimizer: flattened leaf CTEs")
+                sql = optimized
+
+            db = get_db()
+            sql = await asyncio.to_thread(
+                self._pre_execute_small_ctes, sql, db,
+            )
+
+            # --- Step 6: Execute query ---
+            if self._settings.sql_statement_timeout_ms == 0:
+                exec_timeout = 0
+            else:
+                base = max(
+                    complexity.suggested_timeout_ms,
+                    self._settings.sql_statement_timeout_ms,
+                )
+                exec_timeout = (
+                    min(base, self._settings.sql_max_timeout_ms)
+                    if self._settings.sql_max_timeout_ms > 0
+                    else base
+                )
+            logger.info(
+                "Executing with timeout: %dms (complexity=%s, attempt=%d/%d)",
+                exec_timeout, complexity.level, attempt + 1, total_attempts,
+            )
+            yield _progress(
+                "executing",
+                f"Running query{attempt_label} ({complexity.level} complexity)...",
+                60,
+            )
+
+            result = None
+            try:
+                result = await asyncio.to_thread(
+                    cancellable.execute, sql, None,
+                    exec_timeout, self._settings.sql_max_rows,
+                )
+            except QueryCancelledError:
+                raise
+            except Exception as exec_err:
+                error_str = str(exec_err)
+                is_timeout = (
+                    "timeout" in error_str.lower()
+                    or "canceling statement" in error_str.lower()
+                )
+                is_runtime_error = any(
+                    x in error_str.lower() for x in [
+                        "syntax error", "does not exist", "type", "invalid",
+                        "division by zero", "out of range", "cannot cast",
+                        "ambiguous",
+                    ]
+                )
+
+                # Staged execution fallback for timeouts
+                if is_timeout:
+                    try:
+                        staged = StagedExecutor(get_db())
+                        if staged.can_decompose(sql):
+                            yield _progress(
+                                "staged_execution",
+                                "Retrying with staged execution...",
+                                65,
+                            )
+                            staged_result = await asyncio.to_thread(
+                                staged.execute_staged,
+                                sql, exec_timeout,
+                                self._settings.sql_max_rows,
+                                STAGE_TIMEOUT_MS, MAX_MATERIALIZE_ROWS,
+                                cancellable,
+                            )
+                            if staged_result is not None:
+                                result = staged_result.query_result
+                                logger.info(
+                                    "Staged execution succeeded: %d stages, %.0fms",
+                                    staged_result.stages_executed,
+                                    staged_result.total_stage_time_ms,
+                                )
+                    except QueryCancelledError:
+                        raise
+                    except Exception as staged_e:
+                        logger.warning("Staged execution failed: %s", staged_e)
+
+                if result is None and (is_timeout or is_runtime_error):
+                    accumulated_errors.append({
+                        "sql": sql,
+                        "error": f"Query execution failed: {error_str}",
+                        "stage": "execution",
+                    })
+                    continue
+
+                # Non-retryable error
+                if result is None:
+                    yield _fail(
+                        f"I couldn't execute the query. Error: {exec_err}",
+                        sql=sql, error=error_str,
+                        assumptions=gen.assumptions,
+                        concepts_used=gen.concepts_used, confidence="low",
+                    )
+                    return
+
+            # Execution succeeded — break out of retry loop
+            break
+        else:
+            # All attempts exhausted
+            last_err = accumulated_errors[-1] if accumulated_errors else {
+                "error": "Unknown error", "sql": "",
+            }
+            yield _fail(
+                f"I couldn't process the query after {total_attempts} attempts. "
+                f"Last error: {last_err.get('error', 'Unknown')}",
+                sql=last_err.get("sql", ""),
+                error=last_err.get("error"),
+                assumptions=gen.assumptions if gen else [],
+                concepts_used=gen.concepts_used if gen else [],
+                confidence="low",
+            )
+            return
+
+        # --- Post-loop: sanity checks, format answer ---
         yield _progress("sanity_check", "Validating results...", 80)
         sanity_results = run_sanity_checks(result, gen.validation_checks)
         failed_checks = [c for c in sanity_results if not c.passed]
 
-        # Step 8: Format answer via LLM
         yield _progress("formatting", "Preparing your answer...", 90)
         cancellable.check_cancelled()
         answer = await asyncio.to_thread(

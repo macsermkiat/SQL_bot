@@ -463,6 +463,7 @@ class SQLGenerator:
         self,
         question: str,
         conversation_history: list[dict[str, str]] | None = None,
+        extended_thinking: bool = False,
     ) -> SQLGenerationResponse:
         """
         Generate SQL from natural language question.
@@ -470,6 +471,7 @@ class SQLGenerator:
         Args:
             question: User's analytical question
             conversation_history: Previous conversation for context
+            extended_thinking: Enable extended thinking for harder reasoning
 
         Returns:
             SQLGenerationResponse with SQL and metadata
@@ -483,6 +485,7 @@ class SQLGenerator:
             schema_context=schema_context,
             concepts_context=self.concepts_context,
             conversation_history=conversation_history,
+            extended_thinking=extended_thinking,
         )
 
     def get_join_recommendation(self, tables: list[str]) -> str:

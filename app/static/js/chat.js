@@ -189,6 +189,48 @@
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
 
+    function handleAutoFixNewAttempt(data) {
+        // Finalize current progress indicator as an error message
+        var progressMsg = document.getElementById("progress-message");
+        if (progressMsg) {
+            progressMsg.removeAttribute("id");
+            progressMsg.className = "message assistant";
+
+            var attemptNum = (data.attempt || 2) - 1;
+            var maxAttempts = data.max_attempts || 6;
+            var content = progressMsg.querySelector(".message-content");
+            if (content) {
+                var html =
+                    '<div class="auto-fix-retry-note">' +
+                    '<span class="auto-fix-icon">&#9888;</span> ' +
+                    "Attempt " + attemptNum + "/" + maxAttempts + " failed" +
+                    "</div>";
+
+                if (data.error_message) {
+                    html +=
+                        '<div class="error-message">' +
+                        escapeHtml(data.error_message) +
+                        "</div>";
+                }
+
+                if (userRole === "super_user" && data.failed_sql) {
+                    html +=
+                        '<details class="expandable">' +
+                        "<summary>View failed SQL</summary>" +
+                        '<div class="expandable-content"><pre>' +
+                        escapeHtmlRaw(data.failed_sql) +
+                        "</pre></div></details>";
+                }
+
+                content.innerHTML = html;
+            }
+        }
+
+        // Add fresh progress indicator for the new attempt
+        addProgressIndicator();
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
     function setLoadingState(loading) {
         if (loading) {
             sendButton.style.display = "none";
@@ -269,6 +311,10 @@
 
             case "auto_fix_countdown":
                 showAutoFixCountdown(data);
+                break;
+
+            case "auto_fix_new_attempt":
+                handleAutoFixNewAttempt(data);
                 break;
 
             case "error":

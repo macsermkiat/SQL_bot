@@ -27,6 +27,7 @@ class LLMClient:
         schema_context: str,
         concepts_context: str,
         conversation_history: list[dict[str, str]] | None = None,
+        extended_thinking: bool = False,
     ) -> SQLGenerationResponse:
         """
         Generate SQL from natural language question.
@@ -36,6 +37,7 @@ class LLMClient:
             schema_context: Schema information (tables, columns)
             concepts_context: Clinical concept definitions
             conversation_history: Previous messages for context
+            extended_thinking: Enable extended thinking for harder reasoning
 
         Returns:
             SQLGenerationResponse with SQL and metadata
@@ -43,14 +45,38 @@ class LLMClient:
         system_prompt = self._build_system_prompt(schema_context, concepts_context)
         messages = self._build_messages(user_question, conversation_history)
 
-        response = self._client.messages.create(
-            model=self._model,
-            max_tokens=4096,
-            system=system_prompt,
-            messages=messages,
-        )
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "max_tokens": 16000 if extended_thinking else 4096,
+            "system": system_prompt,
+            "messages": messages,
+        }
 
-        return self._parse_response(response.content[0].text)
+        if extended_thinking:
+            kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": 10000,
+            }
+
+        try:
+            response = self._client.messages.create(**kwargs)
+        except Exception:
+            if extended_thinking:
+                # Fall back without extended thinking
+                kwargs.pop("thinking", None)
+                kwargs["max_tokens"] = 4096
+                response = self._client.messages.create(**kwargs)
+            else:
+                raise
+
+        # Extract text content (skip thinking blocks when extended thinking is used)
+        text_content = ""
+        for block in response.content:
+            if block.type == "text":
+                text_content = block.text
+                break
+
+        return self._parse_response(text_content)
 
     def _build_system_prompt(self, schema_context: str, concepts_context: str) -> str:
         """Build the system prompt with schema and concept context."""

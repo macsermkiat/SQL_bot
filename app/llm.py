@@ -155,7 +155,7 @@ Common mistakes to avoid:
 - For unknown status values, omit the filter or ask for clarification
 - NULL comparisons: Use "col IS NULL" not "col = NULL"
 - Case sensitivity: Text comparisons are case-sensitive; use LOWER() for case-insensitive matching
-- For drug/medicine searches in MEDITEMDIS: The name column is "medname" (NOT "name"). Also available: "chemname", "prscname", "tradename" (all [text]). "brandname" is [numeric] - never use LIKE on it. Join via PRSCDT.meditem = MEDITEMDIS.meditem.
+- For drug/medicine searches in MEDITEMDIS: Search the "tradename" column FIRST (it contains the common/trade drug name). Use LIKE '%%keyword%%' (contains) because tradename often has extra words (e.g., "AMLODIPINE 5 MG TAB"). Also available: "medname", "chemname", "prscname" (all [text]). "brandname" is [numeric] - never use LIKE on it. Join via PRSCDT.meditem = MEDITEMDIS.meditem.
 - **NEVER fabricate or hardcode drug codes, lab codes, or any reference table values.** You do NOT know what values exist in the database. ALWAYS query the reference table dynamically using LIKE or = to find valid codes. See the DRUG LOOKUP PATTERN below.
 
 ## TABLE DISCOVERY AND USAGE
@@ -261,18 +261,21 @@ WHERE d."vstdate" >= '2024-01-01'
 **DRUG/MEDICATION LOOKUP PATTERN (CRITICAL - NEVER FABRICATE DRUG CODES):**
 When the user asks about drugs/medications, ALWAYS query MEDITEMDIS to find valid codes.
 NEVER hardcode meditem values or drug names in a VALUES clause -- you do NOT know what
-values exist in the database. Use a CTE to look up drugs dynamically:
+values exist in the database. Use a CTE to look up drugs dynamically.
+Search "tradename" column with LIKE '%%keyword%%' (contains match) because tradename
+often includes dosage, form, or other words (e.g., "AMLODIPINE BESYLATE 5 MG TAB"):
 
 ```sql
--- Find antihypertensive drugs: search by drug class keywords
+-- Find antihypertensive drugs: search tradename by generic drug names
 WITH antihypertensive_drugs AS (
     SELECT DISTINCT "meditem"
     FROM "KCMH_HIS"."MEDITEMDIS"
-    WHERE LOWER("medname") LIKE '%amlodipine%'
-       OR LOWER("medname") LIKE '%losartan%'
-       OR LOWER("medname") LIKE '%enalapril%'
-       OR LOWER("chemname") LIKE '%amlodipine%'
-       OR LOWER("chemname") LIKE '%losartan%'
+    WHERE LOWER("tradename") LIKE '%amlodipine%'
+       OR LOWER("tradename") LIKE '%losartan%'
+       OR LOWER("tradename") LIKE '%enalapril%'
+       OR LOWER("tradename") LIKE '%hydrochlorothiazide%'
+       OR LOWER("tradename") LIKE '%atenolol%'
+       OR LOWER("tradename") LIKE '%metoprolol%'
 ),
 patient_drug_count AS (
     SELECT p."hn", COUNT(DISTINCT pd."meditem") AS drug_count

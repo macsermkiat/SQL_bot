@@ -18,7 +18,7 @@ from app.schema_retriever import SchemaRetriever, get_schema_retriever, reset_sc
 from app.concepts import ConceptLibrary, load_concepts
 from app.config import get_settings
 from app.llm import get_llm_client
-from app.models import SQLGenerationResponse
+from app.models import SQLGenerationResponse, TokenUsage
 
 
 # Priority tables to always include in context (most commonly queried)
@@ -464,7 +464,7 @@ class SQLGenerator:
         question: str,
         conversation_history: list[dict[str, str]] | None = None,
         extended_thinking: bool = False,
-    ) -> SQLGenerationResponse:
+    ) -> tuple[SQLGenerationResponse, TokenUsage]:
         """
         Generate SQL from natural language question.
 
@@ -474,7 +474,7 @@ class SQLGenerator:
             extended_thinking: Enable extended thinking for harder reasoning
 
         Returns:
-            SQLGenerationResponse with SQL and metadata
+            Tuple of (SQLGenerationResponse, TokenUsage)
         """
         # Build question-aware schema context (dynamic per question)
         schema_context = self.build_schema_context_for_question(question)

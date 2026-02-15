@@ -24,7 +24,7 @@ from app.config import get_settings
 from app.schema_catalog import SchemaCatalog, get_schema_catalog
 from app.db import CancellableQuery, QueryCancelledError, get_db
 from app.llm import get_llm_client
-from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult
+from app.models import ChatRequest, ChatResponse, QueryResult, SanityCheckResult, TokenUsage
 from app.staged_query import (
     MAX_MATERIALIZE_ROWS,
     STAGE_TIMEOUT_MS,
@@ -119,8 +119,17 @@ class ChatOrchestrator:
         # Get conversation history for context
         history = session_manager.get_conversation_history(session_id, max_messages=6)
 
+        # Token accumulator across all LLM calls
+        total_usage = TokenUsage()
+
+        def _accumulate(usage: TokenUsage) -> None:
+            total_usage.input_tokens += usage.input_tokens
+            total_usage.output_tokens += usage.output_tokens
+            total_usage.total_tokens += usage.total_tokens
+
         # Step 1: Generate SQL via LLM
-        gen_response = generator.generate(question, conversation_history=history)
+        gen_response, gen_usage = generator.generate(question, conversation_history=history)
+        _accumulate(gen_usage)
 
         # Step 2: Check if clarification needed
         if gen_response.needs_clarification:
@@ -131,6 +140,7 @@ class ChatOrchestrator:
                 clarification_question=gen_response.clarification_question,
                 assumptions=gen_response.assumptions,
                 confidence=gen_response.confidence,
+                token_usage=total_usage,
             )
 
         sql = gen_response.sql
@@ -155,12 +165,14 @@ class ChatOrchestrator:
             logger.warning(f"SQL validation failed: {validation.error}")
 
             # Try to fix by asking LLM to regenerate
-            retry_response = await self._retry_with_error(
+            retry_response, retry_usage = await self._retry_with_error(
                 question=question,
                 failed_sql=sql,
                 error=validation.error or "Unknown error",
                 history=history,
             )
+            if retry_usage:
+                _accumulate(retry_usage)
 
             if retry_response:
                 # Validate the retry (also with strict checking)
@@ -214,12 +226,14 @@ class ChatOrchestrator:
             logger.warning(f"SQL EXPLAIN validation failed: {explain_error}")
 
             # Try to fix by asking LLM to regenerate with runtime error
-            retry_response = await self._retry_with_error(
+            retry_response, retry_usage = await self._retry_with_error(
                 question=question,
                 failed_sql=sql,
                 error=explain_error or "Runtime validation failed",
                 history=history,
             )
+            if retry_usage:
+                _accumulate(retry_usage)
 
             if retry_response:
                 # Validate the retry with both sql_guard and EXPLAIN
@@ -330,12 +344,14 @@ class ChatOrchestrator:
 
             # --- LLM retry if staged didn't resolve it ---
             if result is None and (is_timeout or is_runtime_error):
-                retry_response = await self._retry_with_error(
+                retry_response, retry_usage = await self._retry_with_error(
                     question=question,
                     failed_sql=sql,
                     error=f"Query execution failed: {error_str}",
                     history=history,
                 )
+                if retry_usage:
+                    _accumulate(retry_usage)
 
                 if retry_response:
                     retry_validation = validate_sql(
@@ -411,7 +427,7 @@ class ChatOrchestrator:
             logger.warning(f"Sanity checks failed: {[c.message for c in failed_checks]}")
 
         # Step 9: Format answer
-        answer = await self._format_answer(
+        answer, fmt_usage = await self._format_answer(
             question=question,
             sql=sql,
             result=result,
@@ -419,6 +435,7 @@ class ChatOrchestrator:
             concepts_used=gen_response.concepts_used,
             failed_checks=failed_checks,
         )
+        _accumulate(fmt_usage)
 
         # Add complexity warning if query was complex
         if complexity_warning:
@@ -433,6 +450,7 @@ class ChatOrchestrator:
             confidence=gen_response.confidence,
             sanity_checks=sanity_results,
             query_result=result,
+            token_usage=total_usage,
         )
 
     def _pre_execute_small_ctes(self, sql: str, db: Any) -> str:
@@ -500,8 +518,12 @@ class ChatOrchestrator:
         failed_sql: str,
         error: str,
         history: list[dict[str, str]],
-    ) -> Any:
-        """Retry SQL generation with error context (sync)."""
+    ) -> tuple[Any, TokenUsage | None]:
+        """Retry SQL generation with error context (sync).
+
+        Returns:
+            Tuple of (SQLGenerationResponse or None, TokenUsage or None)
+        """
         generator = get_sql_generator()
 
         available_tables = ""
@@ -573,12 +595,13 @@ class ChatOrchestrator:
         ]
 
         try:
-            return generator.generate(
+            response, usage = generator.generate(
                 question, conversation_history=error_context,
             )
+            return response, usage
         except Exception:
             logger.exception("Retry failed")
-            return None
+            return None, None
 
     async def _retry_with_error(
         self,
@@ -586,7 +609,7 @@ class ChatOrchestrator:
         failed_sql: str,
         error: str,
         history: list[dict[str, str]],
-    ) -> Any:
+    ) -> tuple[Any, TokenUsage | None]:
         """Retry SQL generation with error context."""
         return self._retry_with_error_impl(
             question, failed_sql, error, history,
@@ -666,8 +689,12 @@ class ChatOrchestrator:
         question: str,
         accumulated_errors: list[dict[str, str]],
         history: list[dict[str, str]],
-    ) -> Any:
-        """Retry SQL generation with all accumulated errors and extended thinking."""
+    ) -> tuple[Any, TokenUsage | None]:
+        """Retry SQL generation with all accumulated errors and extended thinking.
+
+        Returns:
+            Tuple of (SQLGenerationResponse or None, TokenUsage or None)
+        """
         generator = get_sql_generator()
 
         error_history = list(history)
@@ -698,14 +725,15 @@ class ChatOrchestrator:
         })
 
         try:
-            return generator.generate(
+            response, usage = generator.generate(
                 question,
                 conversation_history=error_history,
                 extended_thinking=True,
             )
+            return response, usage
         except Exception:
             logger.exception("Retry with accumulated errors failed")
-            return None
+            return None, None
 
     def _format_answer_impl(
         self,
@@ -715,8 +743,12 @@ class ChatOrchestrator:
         assumptions: list[str],
         concepts_used: list[str],
         failed_checks: list[SanityCheckResult],
-    ) -> str:
-        """Format the final answer from query results (sync)."""
+    ) -> tuple[str, TokenUsage]:
+        """Format the final answer from query results (sync).
+
+        Returns:
+            Tuple of (answer text, TokenUsage)
+        """
         llm = get_llm_client()
 
         result_data = {
@@ -726,7 +758,7 @@ class ChatOrchestrator:
             "truncated": result.truncated,
         }
 
-        answer = llm.format_answer(
+        answer, usage = llm.format_answer(
             question=question,
             _sql=sql,
             result_data=result_data,
@@ -743,7 +775,7 @@ class ChatOrchestrator:
         if result.truncated:
             answer += f"\n\n*Note: Results were limited to {result.row_count} rows.*"
 
-        return answer
+        return answer, usage
 
     async def _format_answer(
         self,
@@ -753,7 +785,7 @@ class ChatOrchestrator:
         assumptions: list[str],
         concepts_used: list[str],
         failed_checks: list[SanityCheckResult],
-    ) -> str:
+    ) -> tuple[str, TokenUsage]:
         """Format the final answer from query results."""
         return self._format_answer_impl(
             question, sql, result, assumptions, concepts_used, failed_checks,
@@ -853,9 +885,20 @@ class ChatOrchestrator:
             return {"event": "complete", "data": resp.model_dump()}
 
         def _fail(answer: str, **kw: Any) -> dict:
+            kw.setdefault("token_usage", total_usage)
             return _complete(ChatResponse(
                 session_id=session_id, answer=answer, **kw,
             ))
+
+        # Token accumulator across all LLM calls
+        total_usage = TokenUsage()
+
+        def _accumulate(usage: TokenUsage | None) -> None:
+            if usage is None:
+                return
+            total_usage.input_tokens += usage.input_tokens
+            total_usage.output_tokens += usage.output_tokens
+            total_usage.total_tokens += usage.total_tokens
 
         accumulated_errors: list[dict[str, str]] = []
         sql: str | None = None
@@ -897,10 +940,11 @@ class ChatOrchestrator:
             cancellable.check_cancelled()
 
             if is_retry:
-                gen = await asyncio.to_thread(
+                gen, gen_usage = await asyncio.to_thread(
                     self._retry_with_accumulated_errors,
                     question, accumulated_errors, history,
                 )
+                _accumulate(gen_usage)
                 if not gen or not gen.sql:
                     accumulated_errors.append({
                         "sql": accumulated_errors[-1].get("sql", "") if accumulated_errors else "",
@@ -909,7 +953,8 @@ class ChatOrchestrator:
                     })
                     continue
             else:
-                gen = await asyncio.to_thread(generator.generate, question, history)
+                gen, gen_usage = await asyncio.to_thread(generator.generate, question, history)
+                _accumulate(gen_usage)
 
             # Clarification / no SQL - not retryable
             if gen.needs_clarification:
@@ -918,6 +963,7 @@ class ChatOrchestrator:
                     needs_clarification=True,
                     clarification_question=gen.clarification_question,
                     assumptions=gen.assumptions, confidence=gen.confidence,
+                    token_usage=total_usage,
                 )
                 return
 
@@ -1097,10 +1143,11 @@ class ChatOrchestrator:
 
         yield _progress("formatting", "Preparing your answer...", 90)
         cancellable.check_cancelled()
-        answer = await asyncio.to_thread(
+        answer, fmt_usage = await asyncio.to_thread(
             self._format_answer_impl, question, sql, result,
             gen.assumptions, gen.concepts_used, failed_checks,
         )
+        _accumulate(fmt_usage)
 
         if complexity_warning:
             answer = f"{complexity_warning}\n\n{answer}"
@@ -1109,7 +1156,7 @@ class ChatOrchestrator:
             session_id=session_id, answer=answer, sql=sql,
             assumptions=gen.assumptions, concepts_used=gen.concepts_used,
             confidence=gen.confidence, sanity_checks=sanity_results,
-            query_result=result,
+            query_result=result, token_usage=total_usage,
         )
         yield _complete(response)
 

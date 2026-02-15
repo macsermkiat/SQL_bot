@@ -43,6 +43,17 @@
                 metadata.confidence +
                 "</span>";
 
+            if (metadata.token_usage) {
+                var tu = metadata.token_usage;
+                metaItems +=
+                    '<span class="token-stat">' +
+                    tu.input_tokens.toLocaleString() +
+                    " in</span>" +
+                    '<span class="token-stat">' +
+                    tu.output_tokens.toLocaleString() +
+                    " out</span>";
+            }
+
             if (userRole === "super_user" && metadata.query_result) {
                 var qr = metadata.query_result;
                 metaItems +=
@@ -306,6 +317,7 @@
                     assumptions: data.assumptions,
                     error: data.error,
                     query_result: data.query_result,
+                    token_usage: data.token_usage,
                 });
                 break;
 

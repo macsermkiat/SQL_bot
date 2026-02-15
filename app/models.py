@@ -92,6 +92,14 @@ class SanityCheckResult(BaseModel):
     message: str
 
 
+class TokenUsage(BaseModel):
+    """Token usage from LLM API calls."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
 class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
 
@@ -106,6 +114,7 @@ class ChatResponse(BaseModel):
     error: str | None = None
     needs_clarification: bool = False
     clarification_question: str | None = None
+    token_usage: TokenUsage | None = None
 
 
 class Message(BaseModel):

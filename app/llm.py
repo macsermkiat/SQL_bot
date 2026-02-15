@@ -10,7 +10,7 @@ from typing import Any
 import anthropic
 
 from app.config import get_settings
-from app.models import SQLGenerationResponse
+from app.models import SQLGenerationResponse, TokenUsage
 
 
 class LLMClient:
@@ -28,7 +28,7 @@ class LLMClient:
         concepts_context: str,
         conversation_history: list[dict[str, str]] | None = None,
         extended_thinking: bool = False,
-    ) -> SQLGenerationResponse:
+    ) -> tuple[SQLGenerationResponse, TokenUsage]:
         """
         Generate SQL from natural language question.
 
@@ -40,7 +40,7 @@ class LLMClient:
             extended_thinking: Enable extended thinking for harder reasoning
 
         Returns:
-            SQLGenerationResponse with SQL and metadata
+            Tuple of (SQLGenerationResponse, TokenUsage)
         """
         system_prompt = self._build_system_prompt(schema_context, concepts_context)
         messages = self._build_messages(user_question, conversation_history)
@@ -69,6 +69,12 @@ class LLMClient:
             else:
                 raise
 
+        usage = TokenUsage(
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+        )
+
         # Extract text content (skip thinking blocks when extended thinking is used)
         text_content = ""
         for block in response.content:
@@ -76,7 +82,7 @@ class LLMClient:
                 text_content = block.text
                 break
 
-        return self._parse_response(text_content)
+        return self._parse_response(text_content), usage
 
     def _build_system_prompt(self, schema_context: str, concepts_context: str) -> str:
         """Build the system prompt with schema and concept context."""
@@ -435,7 +441,7 @@ If the question is ambiguous OR you're unsure about table/column names, set need
         result_data: dict[str, Any],
         assumptions: list[str],
         concepts_used: list[str],
-    ) -> str:
+    ) -> tuple[str, TokenUsage]:
         """
         Format the final answer from query results.
 
@@ -447,7 +453,7 @@ If the question is ambiguous OR you're unsure about table/column names, set need
             concepts_used: Concepts used
 
         Returns:
-            Natural language answer
+            Tuple of (answer text, TokenUsage)
         """
         messages = [{
             "role": "user",
@@ -477,7 +483,13 @@ Keep it brief and professional.""",
             messages=messages,
         )
 
-        return response.content[0].text
+        usage = TokenUsage(
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+        )
+
+        return response.content[0].text, usage
 
 
 # Global client instance

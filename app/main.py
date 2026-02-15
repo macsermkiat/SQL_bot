@@ -244,6 +244,14 @@ async def chat_stream(
                             payload["error_message"] = (
                                 "Query encountered an error. Attempting auto-fix..."
                             )
+                elif event_type == "auto_fix_new_attempt":
+                    payload = dict(event.get("data", {}))
+                    if user.role != "super_user":
+                        payload.pop("failed_sql", None)
+                        if "error_message" in payload:
+                            payload["error_message"] = (
+                                "Query encountered an error. Attempting auto-fix..."
+                            )
                 elif event_type == "error":
                     payload = {
                         "message": event.get("message", "Unknown error"),

@@ -79,6 +79,17 @@ _TABLE_COMPONENT_EXPANSIONS: dict[str, list[str]] = {
     "diagtype": ["diagnosis", "type", "priority"],
     "erdch": ["emergency", "discharge"],
     "erzone": ["emergency", "zone", "triage"],
+    # Previously missing expansions (caused retriever misses)
+    "cliniclct": ["clinic", "location", "room", "department"],
+    "emrgncy": ["emergency", "urgency", "triage"],
+    "lct": ["location", "department", "unit"],
+    "spclty": ["specialty", "department", "division"],
+    "claim": ["claim", "insurance", "payer"],
+    "incprvlg": ["income", "privilege", "billing", "insurance"],
+    "wardicu": ["ward", "icu", "intensive"],
+    "lcttype": ["location", "type"],
+    "strengthunit": ["strength", "unit", "dose"],
+    "volumeunit": ["volume", "unit", "dose"],
 }
 
 # ---------------------------------------------------------------------------
@@ -410,22 +421,74 @@ class SchemaRetriever:
     # Table directory (compact listing for LLM context)
     # ------------------------------------------------------------------
 
-    def build_table_directory(self) -> str:
-        """Build a compact directory of ALL tables for LLM context.
+    @staticmethod
+    def _col_type_abbrev(data_type: str) -> str:
+        """Compact type abbreviation for a column."""
+        dt = (data_type or "").lower()
+        if "varchar" in dt or "text" in dt or "char" in dt:
+            return "t"
+        if "numeric" in dt or "int" in dt or "decimal" in dt:
+            return "n"
+        if "timestamp" in dt or "date" in dt:
+            return "d"
+        if "bool" in dt:
+            return "b"
+        return ""
 
-        This is ~7KB and gives the LLM awareness of every table in the
-        database, even those whose full column details are not loaded.
-        The LLM can use this to identify tables it needs.
+    def _pick_key_columns(self, table_name: str) -> str:
+        """Pick up to 7 key columns for a directory entry.
+
+        Priority order:
+        1. Universal keys (hn, an, vn) present in table
+        2. PK columns
+        3. FK columns (up to 3)
+        4. Date columns (vstdate, indate, outdate, etc.)
+        5. Important domain columns (name, code, status)
+        """
+        table = self._catalog.tables.get(table_name)
+        if not table or not table.columns:
+            return ""
+
+        universal: list[str] = []
+        pks: list[str] = []
+        fks: list[str] = []
+        dates: list[str] = []
+        others: list[str] = []
+
+        for col_name, col in table.columns.items():
+            abbr = self._col_type_abbrev(col.data_type)
+            entry = f"{col_name}:{abbr}" if abbr else col_name
+
+            lower = col_name.lower()
+            # Universal keys first
+            if lower in ("hn", "an", "vn"):
+                universal.append(entry)
+            elif col.is_pk:
+                pks.append(entry)
+            elif col.is_fk:
+                fks.append(entry)
+            elif abbr == "d" or "date" in lower:
+                dates.append(entry)
+            elif lower in ("name", "name_en", "abbrname", "icd10", "icd9cm",
+                           "labexm", "meditem", "tradename", "status"):
+                others.append(entry)
+
+        # Assemble: universal + PKs + FKs (max 3) + dates (max 2) + others
+        picked = universal + pks + fks[:3] + dates[:2] + others
+        return ",".join(picked[:7])
+
+    def build_table_directory(self) -> str:
+        """Build an enhanced directory of ALL tables for LLM context.
+
+        Each entry shows the table description plus key columns (PK/FK/
+        universal keys/date columns) so the LLM can write JOINs and basic
+        queries even for tables without full DETAILED column info.
         """
         lines = [
             "## TABLE DIRECTORY (All Available Tables)",
             "",
-            "Below is every table in the database with its description.",
-            "Tables marked with [DETAILED] have full column details in the "
-            "schema section below.",
-            "If you need a table not marked [DETAILED], you can still use it "
-            "-- refer to the table name and description to infer columns, "
-            "or set needs_clarification=true to ask.",
+            "Every table with key columns. [DETAILED] = full column info below.",
+            "Non-detailed tables: use listed key columns + universal keys (hn/vn/an).",
             "",
         ]
 
@@ -433,7 +496,11 @@ class SchemaRetriever:
             table = self._catalog.tables[table_name]
             comment = table.comment or ""
             col_count = table.column_count or len(table.columns)
-            lines.append(f"- {table_name}: {comment} [{col_count} cols]")
+            key_cols = self._pick_key_columns(table_name)
+            col_part = f" | {key_cols}" if key_cols else ""
+            lines.append(
+                f"- {table_name}: {comment}{col_part} [{col_count}c]"
+            )
 
         return "\n".join(lines)
 

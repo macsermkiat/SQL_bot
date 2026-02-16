@@ -8946,7 +8946,7 @@
     },
     "INCPRVLG": {
       "name": "INCPRVLG",
-      "comment": "",
+      "comment": "ข้อมูลสิทธิประโยชน์ค่ารักษา",
       "column_count": 100,
       "family": "INCP",
       "columns": {
@@ -15665,7 +15665,7 @@
     },
     "CLINICLCT": {
       "name": "CLINICLCT",
-      "comment": "",
+      "comment": "ข้อมูลหน่วยงานห้องตรวจ/คลินิก",
       "column_count": 88,
       "family": "CLIN",
       "columns": {
@@ -19114,7 +19114,7 @@
     },
     "INCPT": {
       "name": "INCPT",
-      "comment": "",
+      "comment": "ข้อมูลค่ารักษาพยาบาลต่อครั้ง",
       "column_count": 85,
       "family": "INCPT",
       "columns": {
@@ -33937,7 +33937,7 @@
     },
     "LCT": {
       "name": "LCT",
-      "comment": "",
+      "comment": "ข้อมูลหน่วยงาน/สถานที่",
       "column_count": 43,
       "family": "LCT",
       "columns": {
@@ -35074,7 +35074,7 @@
     },
     "DCT": {
       "name": "DCT",
-      "comment": "",
+      "comment": "ข้อมูลแพทย์/บุคลากร",
       "column_count": 37,
       "family": "DCT",
       "columns": {
@@ -36894,7 +36894,7 @@
     },
     "WARD": {
       "name": "WARD",
-      "comment": "",
+      "comment": "ข้อมูลหอผู้ป่วย/ตึก",
       "column_count": 36,
       "family": "WARD",
       "columns": {
@@ -39771,7 +39771,7 @@
     },
     "CLAIMLCT": {
       "name": "CLAIMLCT",
-      "comment": "",
+      "comment": "ข้อมูลหน่วยงานเรียกเก็บ/ผู้จ่าย",
       "column_count": 25,
       "family": "CLAI",
       "columns": {
@@ -45120,7 +45120,7 @@
     },
     "LCTTYPE": {
       "name": "LCTTYPE",
-      "comment": "",
+      "comment": "ข้อมูลประเภทหน่วยงาน",
       "column_count": 12,
       "family": "LCT",
       "columns": {
@@ -46394,7 +46394,7 @@
     },
     "WARDICU": {
       "name": "WARDICU",
-      "comment": "",
+      "comment": "ข้อมูลหอผู้ป่วย ICU",
       "column_count": 10,
       "family": "WARD",
       "columns": {
@@ -46658,7 +46658,7 @@
     },
     "LABEXM_CAT": {
       "name": "LABEXM_CAT",
-      "comment": "",
+      "comment": "ข้อมูลหมวดรายการตรวจ Lab",
       "column_count": 9,
       "family": "LABEXM",
       "columns": {
@@ -47940,7 +47940,7 @@
     },
     "EMRGNCY": {
       "name": "EMRGNCY",
-      "comment": "",
+      "comment": "ข้อมูลระดับความเร่งด่วน/ฉุกเฉิน",
       "column_count": 6,
       "family": "EMRG",
       "columns": {
@@ -48134,7 +48134,7 @@
     },
     "STRENGTHUNIT": {
       "name": "STRENGTHUNIT",
-      "comment": "",
+      "comment": "ข้อมูลหน่วยความแรงยา",
       "column_count": 6,
       "family": "STRE",
       "columns": {
@@ -48213,7 +48213,7 @@
     },
     "VOLUMEUNIT": {
       "name": "VOLUMEUNIT",
-      "comment": "",
+      "comment": "ข้อมูลหน่วยปริมาตรยา",
       "column_count": 6,
       "family": "VOLU",
       "columns": {
@@ -48293,7 +48293,7 @@
     },
     "ORGANISM": {
       "name": "ORGANISM",
-      "comment": "",
+      "comment": "ข้อมูลเชื้อจุลินทรีย์/แบคทีเรีย",
       "column_count": 5,
       "family": "ORGA",
       "columns": {
@@ -48734,8 +48734,8 @@
     },
     "SPCLTY": {
       "name": "SPCLTY",
-      "comment": "",
-      "column_count": 0,
+      "comment": "ข้อมูลภาควิชา/สาขาวิชา",
+      "column_count": 5,
       "family": "SPCL",
       "columns": {
         "spclty": {

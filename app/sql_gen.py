@@ -21,39 +21,26 @@ from app.llm import get_llm_client
 from app.models import SQLGenerationResponse, TokenUsage
 
 
-# Priority tables to always include in context (most commonly queried)
+# Core tables always included (rest discovered dynamically by retriever)
 PRIORITY_TABLES: list[str] = [
-    # Core visit/admission tables
     "OVST",       # Outpatient visits
     "IPT",        # Inpatient admissions
     "PT",         # Patient master (PHI - for joins only)
-    # Diagnosis tables
     "PTDIAG",     # Outpatient diagnoses
     "IPTSUMDIAG", # Inpatient diagnoses
     "ICD10",      # ICD-10 codes
-    # Procedure tables
-    "PTICD9CM",   # Outpatient procedures
-    "IPTSUMOPRT", # Inpatient procedures
-    "ICD9CM",     # ICD-9-CM codes
-    # Prescription tables
     "PRSC",       # Prescription header
     "PRSCDT",     # Prescription details
     "MEDITEMDIS", # Drug master
-    # Lab tables
     "LVST",       # Lab visit
     "LVSTEXM",    # Lab results
     "LABEXM",     # Lab exam master
-    # Reference tables
-    "CLINICLCT",  # Clinic locations
-    "WARD",       # Ward master
-    "DCT",        # Doctor master
-    "PTTYPE",     # Patient type (insurance)
 ]
 
 
 def build_schema_context(
     catalog: SchemaCatalog,
-    max_tables: int = 60,
+    max_tables: int = 45,
     question: str | None = None,
 ) -> str:
     """
@@ -128,8 +115,10 @@ def build_schema_context(
         "",
     ]
 
-    # Build table sections
+    # Build table sections (compact format to save tokens)
     lines.append("### Tables and Columns")
+    lines.append("Format: col_name:type [markers] (hint)")
+    lines.append("Types: n=numeric, t=text, d=date, b=bool")
     lines.append("")
 
     for table_name in tables_to_include:
@@ -138,50 +127,49 @@ def build_schema_context(
             continue
 
         # Table header with Thai description
-        comment = f" - {table.comment}" if table.comment else ""
+        comment = f" {table.comment}" if table.comment else ""
         lines.append(f"**{table_name}**{comment}")
 
-        # Columns with metadata - prioritize important columns
-        important_parts = []  # PK, FK, correction, join requirement
-        regular_parts = []
+        # Build compact column list -- important columns first
+        important_parts: list[str] = []
+        regular_parts: list[str] = []
         for col_name, col in sorted(table.columns.items()):
-            # Build column display with DATA TYPE
-            markers = []
-
-            # Add data type (critical for correct SQL generation)
-            dtype = col.data_type.lower() if col.data_type else "unknown"
+            # Compact type marker
+            dtype = col.data_type.lower() if col.data_type else ""
             if "varchar" in dtype or "text" in dtype or "char" in dtype:
-                markers.append("text")
+                tmark = "t"
             elif "numeric" in dtype or "int" in dtype or "decimal" in dtype:
-                markers.append("numeric")
+                tmark = "n"
             elif "timestamp" in dtype or "date" in dtype:
-                markers.append("date")
+                tmark = "d"
             elif "bool" in dtype:
-                markers.append("bool")
+                tmark = "b"
+            else:
+                tmark = ""
 
+            # Build compact markers
+            extras: list[str] = []
             if col.is_phi:
-                markers.append("PHI")
+                extras.append("PHI")
             if col.is_pk:
-                markers.append("PK")
+                extras.append("PK")
             if col.is_fk and col.fk_targets:
-                # Show FK target with confidence
-                target = col.fk_targets[0]
-                markers.append(f"FK->{target.table}")
+                extras.append(f"→{col.fk_targets[0].table}")
 
-            marker_str = f" [{','.join(markers)}]" if markers else ""
+            marker_str = ",".join([tmark] + extras) if extras else tmark
+            base = f"{col_name}:{marker_str}" if marker_str else col_name
 
-            # Add Thai comment if useful
-            thai_hint = ""
+            # Short Thai hint (only for non-PHI, truncate to 15 chars)
+            hint = ""
             if col.comment and not col.is_phi:
-                # Truncate long comments
-                hint = col.comment[:30] + "..." if len(col.comment) > 30 else col.comment
-                thai_hint = f" ({hint})"
+                h = col.comment[:15] + ".." if len(col.comment) > 15 else col.comment
+                hint = f"({h})"
 
-            # Add correction note as inline warning
-            warning = f" ⚠️ {col.correction_note}" if col.correction_note else ""
-            part = f"{col_name}{marker_str}{thai_hint}{warning}"
+            # Correction warning (compact)
+            warn = f" !{col.correction_note}" if col.correction_note else ""
 
-            # Prioritize: PK, FK, PHI, correction_note, requires_join_table
+            part = f"{base}{hint}{warn}"
+
             is_important = (
                 col.is_pk or col.is_fk or col.is_phi
                 or col.correction_note or col.requires_join_table
@@ -191,20 +179,19 @@ def build_schema_context(
             else:
                 regular_parts.append(part)
 
-        # Combine: important columns first, then regular
         col_parts = important_parts + regular_parts
 
-        # Limit columns shown per table
-        if len(col_parts) > 15:
-            # Always show all important columns, truncate regular ones
-            max_regular = max(15 - len(important_parts), 3)
+        # Limit: 10 columns per table (all important + fill with regular)
+        max_cols = 10
+        if len(col_parts) > max_cols:
+            max_regular = max(max_cols - len(important_parts), 2)
             shown = important_parts + regular_parts[:max_regular]
             remaining = len(col_parts) - len(shown)
             if remaining > 0:
-                shown.append(f"... +{remaining} more columns")
+                shown.append(f"+{remaining}more")
             col_parts = shown
 
-        lines.append(f"  Columns: {', '.join(col_parts)}")
+        lines.append(f"  {', '.join(col_parts)}")
         lines.append("")
 
     # Add join guidance
@@ -233,8 +220,8 @@ def build_schema_context(
         ))
 
     # Group by relationship type
-    universal_joins = [j for j in common_joins if j[4] == "universal"][:10]
-    table_match_joins = [j for j in common_joins if j[4] == "table match"][:15]
+    universal_joins = [j for j in common_joins if j[4] == "universal"][:8]
+    table_match_joins = [j for j in common_joins if j[4] == "table match"][:8]
 
     if universal_joins:
         lines.append("**Universal key joins (always prefer these):**")
@@ -318,21 +305,6 @@ def build_schema_context(
         for c in sorted(corrections):
             lines.append(c)
         lines.append("")
-
-    # Add table hints
-    lines.append("### Common Query Patterns")
-    lines.append("")
-    lines.append("**Count patients with condition X:**")
-    lines.append("```sql")
-    lines.append("SELECT COUNT(DISTINCT hn) FROM KCMH_HIS.PTDIAG WHERE icd10 LIKE 'E11%'")
-    lines.append("```")
-    lines.append("")
-    lines.append("**OPD visits by clinic:**")
-    lines.append("```sql")
-    lines.append("SELECT c.cliniclctnm, COUNT(*) FROM KCMH_HIS.OVST o")
-    lines.append("JOIN KCMH_HIS.CLINICLCT c ON o.cliniclct = c.cliniclct")
-    lines.append("WHERE o.vstdate >= '2024-01-01' GROUP BY c.cliniclctnm")
-    lines.append("```")
 
     return "\n".join(lines)
 

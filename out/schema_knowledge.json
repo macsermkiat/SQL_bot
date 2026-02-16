@@ -1076,7 +1076,7 @@
           ],
           "join_warning": "",
           "is_phi": false,
-          "correction_note": "",
+          "correction_note": "NOT for ER visits. Use CNER table for emergency patient data",
           "requires_join_table": "",
           "performance_hint": ""
         },

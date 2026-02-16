@@ -2130,7 +2130,7 @@ OVST,rfrolct,numeric,type/Decimal,รหัสหน่วยงาน,0,,,0,,,[
 OVST,rqtlab,numeric,type/Decimal,"ส่งlab null,1 = ส่งlab  2 = สั่งlabแล้ว",0,,,0,,,[],,,,
 OVST,rqtrdo,numeric,type/Decimal,"ส่งรังสี null,1 = ส่งรังสี  2 = สั่งรังสีแล้ว",0,,,0,,,[],,,,
 OVST,overtime,numeric,type/Decimal,นอกเวลา,0,,,0,,,[],,,,
-OVST,emrgncy,numeric,type/Decimal,รหัส ระดับความรุนแรง,0,,,1,EMRGNCY.emrgncy(high:table match),EMRGNCY.emrgncy,"[{""dir"": ""out"", ""to_table"": ""EMRGNCY"", ""to_column"": ""emrgncy"", ""confidence"": ""high"", ""type"": ""table match"", ""source"": ""relationships.md""}]",,,,
+OVST,emrgncy,numeric,type/Decimal,รหัส ระดับความรุนแรง,0,,,1,EMRGNCY.emrgncy(high:table match),EMRGNCY.emrgncy,"[{""dir"": ""out"", ""to_table"": ""EMRGNCY"", ""to_column"": ""emrgncy"", ""confidence"": ""high"", ""type"": ""table match"", ""source"": ""relationships.md""}]",,NOT for ER visits. Use CNER table for emergency patient data,,
 OVST,nextdate,timestamp,type/DateTime,วันที่นัด,0,,,0,,,[],,,,
 OVST,nexttime,numeric,type/Decimal,เวลานัด,0,,,0,,,[],,,,
 OVST,oappno,numeric,type/Decimal,เลขที่นัด,0,,,0,,,[],,,,

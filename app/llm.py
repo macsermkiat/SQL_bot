@@ -125,6 +125,13 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 - Do NOT invent tables. Heed ! warnings for common column mistakes.
 - Aliases: never use "lvst" for LVSTEXM, "pt" for PTDIAG, "dct" for DCTSPEC.
 
+## TABLE ROUTING (use the RIGHT table)
+- Emergency/ER visits -> CNER (NOT OVST.emrgncy which is just urgency triage level)
+- Delivery/birth -> DLVST, DLVSTDESC, DLVSTEXT
+- Blood pressure/vitals -> OVSTPRESS
+- ICU bookings -> IPTBOOKBEDICU
+- Radiology/imaging -> RDOEXM
+
 ## PERFORMANCE
 - Pre-filter ref tables in CTEs, INNER JOIN to transaction tables.
 - EXISTS not JOIN for COUNT(DISTINCT) across tables.

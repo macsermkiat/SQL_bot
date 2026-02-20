@@ -53415,6 +53415,300 @@
       "SPCLTY"
     ]
   },
+  "family_headers": {
+    "OVST": {
+      "header_table": "OVST",
+      "header_keys": [
+        "an",
+        "hn",
+        "vn"
+      ],
+      "details": [
+        {
+          "table_name": "OVSTOST",
+          "missing_keys": [
+            "an",
+            "hn",
+            "vn"
+          ],
+          "has_keys": [],
+          "join_column": "ovstost",
+          "header_join_column": "ovstost"
+        }
+      ]
+    },
+    "PRSC": {
+      "header_table": "PRSC",
+      "header_keys": [
+        "an",
+        "hn",
+        "vn"
+      ],
+      "details": [
+        {
+          "table_name": "PRSCDORD",
+          "missing_keys": [
+            "hn",
+            "vn"
+          ],
+          "has_keys": [
+            "an"
+          ],
+          "join_column": "prscno",
+          "header_join_column": "prscno"
+        },
+        {
+          "table_name": "PRSCDT",
+          "missing_keys": [
+            "an",
+            "hn",
+            "vn"
+          ],
+          "has_keys": [],
+          "join_column": "prvno",
+          "header_join_column": "prvno"
+        },
+        {
+          "table_name": "PRSCDTEXT",
+          "missing_keys": [
+            "an",
+            "hn",
+            "vn"
+          ],
+          "has_keys": [],
+          "join_column": "prscno",
+          "header_join_column": "prscno"
+        }
+      ]
+    },
+    "IPT": {
+      "header_table": "IPT",
+      "header_keys": [
+        "an",
+        "hn"
+      ],
+      "details": [
+        {
+          "table_name": "IPTSUMDIAG",
+          "missing_keys": [
+            "hn"
+          ],
+          "has_keys": [
+            "an"
+          ],
+          "join_column": "an",
+          "header_join_column": "an"
+        },
+        {
+          "table_name": "IPTSUMOPRT",
+          "missing_keys": [
+            "hn"
+          ],
+          "has_keys": [
+            "an"
+          ],
+          "join_column": "an",
+          "header_join_column": "an"
+        }
+      ]
+    },
+    "ANCVST": {
+      "header_table": "ANCVST",
+      "header_keys": [
+        "an",
+        "hn",
+        "vn"
+      ],
+      "details": [
+        {
+          "table_name": "ANCHISTORY",
+          "missing_keys": [
+            "an",
+            "hn",
+            "vn"
+          ],
+          "has_keys": [],
+          "join_column": "ancno",
+          "header_join_column": "ancno"
+        }
+      ]
+    },
+    "DCTORDERPRSC": {
+      "header_table": "DCTORDERPRSC",
+      "header_keys": [
+        "an",
+        "hn"
+      ],
+      "details": [
+        {
+          "table_name": "DCTORDERPATHOPREG",
+          "missing_keys": [
+            "an"
+          ],
+          "has_keys": [
+            "hn"
+          ],
+          "join_column": "hn",
+          "header_join_column": "hn"
+        }
+      ]
+    },
+    "IPTBOOKBEDICU": {
+      "header_table": "IPTBOOKBEDICU",
+      "header_keys": [
+        "an",
+        "hn"
+      ],
+      "details": [
+        {
+          "table_name": "IPTBOOKBEDICU2",
+          "missing_keys": [
+            "an"
+          ],
+          "has_keys": [
+            "hn"
+          ],
+          "join_column": "hn",
+          "header_join_column": "hn"
+        },
+        {
+          "table_name": "IPTBOOKBEDICUHST",
+          "missing_keys": [
+            "an"
+          ],
+          "has_keys": [
+            "hn"
+          ],
+          "join_column": "hn",
+          "header_join_column": "hn"
+        }
+      ]
+    },
+    "OPDDCTORDER": {
+      "header_table": "OPDDCTORDER",
+      "header_keys": [
+        "an",
+        "hn"
+      ],
+      "details": [
+        {
+          "table_name": "OPDDCTPRSC",
+          "missing_keys": [
+            "an"
+          ],
+          "has_keys": [
+            "hn"
+          ],
+          "join_column": "orderno",
+          "header_join_column": "orderno"
+        }
+      ]
+    },
+    "ARPT": {
+      "header_table": "ARPT",
+      "header_keys": [
+        "an",
+        "hn"
+      ],
+      "details": [
+        {
+          "table_name": "ARPTINC",
+          "missing_keys": [
+            "an",
+            "hn"
+          ],
+          "has_keys": [],
+          "join_column": "arno",
+          "header_join_column": "arno"
+        }
+      ]
+    },
+    "DLVSTEXT": {
+      "header_table": "DLVSTEXT",
+      "header_keys": [
+        "an",
+        "hn"
+      ],
+      "details": [
+        {
+          "table_name": "DLVST",
+          "missing_keys": [
+            "an",
+            "hn"
+          ],
+          "has_keys": [],
+          "join_column": "dlvstreqno",
+          "header_join_column": "dlvstreqno"
+        },
+        {
+          "table_name": "DLVSTAFBRTHSIGN",
+          "missing_keys": [
+            "an",
+            "hn"
+          ],
+          "has_keys": [],
+          "join_column": "dlvstreqno",
+          "header_join_column": "dlvstreqno"
+        },
+        {
+          "table_name": "DLVSTDESC",
+          "missing_keys": [
+            "an",
+            "hn"
+          ],
+          "has_keys": [],
+          "join_column": "dlvstreqno",
+          "header_join_column": "dlvstreqno"
+        }
+      ]
+    },
+    "LVSTEXM": {
+      "header_table": "LVSTEXM",
+      "header_keys": [
+        "an",
+        "hn"
+      ],
+      "details": [
+        {
+          "table_name": "LVSTEXMBAC1",
+          "missing_keys": [
+            "an",
+            "hn"
+          ],
+          "has_keys": [],
+          "join_column": "labno",
+          "header_join_column": "labno"
+        },
+        {
+          "table_name": "LVSTEXMBAC2",
+          "missing_keys": [
+            "an",
+            "hn"
+          ],
+          "has_keys": [],
+          "join_column": "labno",
+          "header_join_column": "labno"
+        }
+      ]
+    },
+    "IPTADM": {
+      "header_table": "IPTADM",
+      "header_keys": [
+        "an"
+      ],
+      "details": [
+        {
+          "table_name": "IPTADMIST",
+          "missing_keys": [
+            "an"
+          ],
+          "has_keys": [],
+          "join_column": "iptadmist",
+          "header_join_column": "iptadmist"
+        }
+      ]
+    }
+  },
   "phi_columns": [
     "address",
     "addrpart",
@@ -53463,6 +53757,8 @@
     "total_tables": 123,
     "total_columns": 2629,
     "total_join_edges": 398,
-    "total_families": 65
+    "total_families": 65,
+    "total_family_headers": 11,
+    "total_detail_tables": 18
   }
 }

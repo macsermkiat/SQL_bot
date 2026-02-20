@@ -21,6 +21,8 @@ from app.schema_parser import (
     SchemaKnowledge,
     JoinEdge,
     FKTarget,
+    FamilyHeaderInfo,
+    DetailTableInfo,
     Column,
     Table,
     get_schema_knowledge,
@@ -194,6 +196,40 @@ class SchemaCatalog:
         if not table:
             return []
         return [c.name for c in table.columns.values() if c.is_phi]
+
+    # ==================== Family Header Detection ====================
+
+    def get_header_for_detail(
+        self, table_name: str,
+    ) -> tuple[str, str, str] | None:
+        """Get the family header for a detail table.
+
+        Returns (header_table, detail_join_col, header_join_col) or None.
+        """
+        upper = table_name.upper()
+        for info in self.schema.family_headers.values():
+            for detail in info.details:
+                if detail.table_name == upper:
+                    return (
+                        info.header_table,
+                        detail.join_column,
+                        detail.header_join_column,
+                    )
+        return None
+
+    def get_missing_keys(self, table_name: str) -> list[str]:
+        """Return universal keys this table lacks (empty if not a detail table)."""
+        upper = table_name.upper()
+        for info in self.schema.family_headers.values():
+            for detail in info.details:
+                if detail.table_name == upper:
+                    return detail.missing_keys
+        return []
+
+    @property
+    def family_headers(self) -> dict[str, FamilyHeaderInfo]:
+        """Get family header info (backward compatible)."""
+        return self.schema.family_headers
 
     # ==================== Join Intelligence ====================
 

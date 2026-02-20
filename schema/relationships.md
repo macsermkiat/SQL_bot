@@ -25,9 +25,9 @@
 | `invno` | Invoice number (billing tables only) |
 | `docno` | Document number (document tables only) |
 
-## Table Families (110 families)
+## Table Families 
 
-### MED (11 tables)
+### MED (15 tables)
 
 - MEDFORM
 - MEDGENERIC
@@ -40,6 +40,10 @@
 - MEDUSETIME
 - MEDUSETYPE
 - MEDUSEUNIT
+- MEDITEMDIS
+- MEDITEMGNR
+- MEDITEMPHM
+- MEDCURE
 
 ### BDVST (6 tables)
 
@@ -66,491 +70,139 @@
 - EYESCREENNURSE
 - EYESCREENOPTOMETRY
 
-### IPT (5 tables)
-
+### IPT (12 tables)
 - IPT
 - IPTINFANTMOTHER
 - IPTSUMDCT
 - IPTSUMDIAG
 - IPTSUMOPRT
+- IPTSUMMARY
+- IPTADM
+- IPTADMIST
+- IPTADMOST
+- IPTBOOKBEDICU
+- IPTBOOKBEDICU2
+- IPTBOOKBEDICUHST
 
-### LAB (5 tables)
-
+### LAB (9 tables)
 - LABMEDICINE
 - LABORGANISM_ITA
 - LABORGANQTY_ITA
 - LABORTYPE
 - LABSPCM
+- LABEXM
+- LABEXMSPCM
+- LABEXM_CAT
+- LABGRP
 
-### OVST (5 tables)
-
+### OVST (4 tables)
 - OVST
-- OVSTDISCHANGE
 - OVSTIST
 - OVSTOST
 - OVSTPRESS
 
-### PRSC (5 tables)
 
-- PRSC
-- PRSCDORD
-- PRSCDT
-- PRSCDTEXT
-- PRSCTYPEPT
-
-### PT (5 tables)
-
+### PT (9 tables)
 - PT
 - PTDIAG
 - PTICD9CM
 - PTOPRT
 - PTPHYSICALEXAM
+- PTTYPE
+- PTTYPEEXT
+- PTTYPEGRP
+- PTALLERGY
 
-### RM (5 tables)
 
-- RM
-- RMLCT
-- RMLCTTYPE
-- RMTYPE
-- RMTYPEGRP
-
-### BD (4 tables)
-
-- BDBRANCH
-- BDLABANC
-- BDTYPE
-- BDUSETYPE
-
-### CN (3 tables)
-
-- CNER
-- CNERCAUSE
-- CNERPLACE
-
-### DCTORDER (3 tables)
-
-- DCTORDER
+### DCT (4 tables)
+- DCT
+- DCTDISCHANGE
 - DCTORDERPATHOPREG
 - DCTORDERPRSC
 
-### IPTADM (3 tables)
-
-- IPTADM
-- IPTADMIST
-- IPTADMOST
-
-### IPTBOOK (3 tables)
-
-- IPTBOOKBEDICU
-- IPTBOOKBEDICU2
-- IPTBOOKBEDICUHST
-
-### LABEXM (3 tables)
-
-- LABEXM
-- LABEXMSPCM
-- LABEXM_CAT
-
-### LVSTEXM (3 tables)
-
+### LVST (4 tables)
+- LVST
 - LVSTEXM
 - LVSTEXMBAC1
 - LVSTEXMBAC2
 
-### MAST (3 tables)
+### MASTER (2 tables)
 
 - MASTERORDER
 - MASTERSALE
-- MASTERSALEPTTYPE
 
-### MEDITEM (3 tables)
-
-- MEDITEMDIS
-- MEDITEMGNR
-- MEDITEMPHM
-
-### OPDDCT (3 tables)
-
+### OPDDCT (2 tables)
 - OPDDCTORDER
 - OPDDCTPRSC
-- OPDDCTRDO
 
-### PTTYPE (3 tables)
-
-- PTTYPE
-- PTTYPEEXT
-- PTTYPEGRP
-
-### WARD (3 tables)
-
+### WARD (2 tables)
 - WARD
 - WARDICU
-- WARDROOMHST
+
 
 ### ARPT (2 tables)
-
 - ARPT
 - ARPTINC
 
-### CMIA (2 tables)
-
-- CMIATEST
-- CMIATESTNEW
-
-### DCT (2 tables)
-
-- DCT
-- DCTDISCHANGE
-
 ### ERDC (2 tables)
-
-- ERDCHST
 - ERDCHSTTYPE
 
-### LPTV (2 tables)
-
-- LPTVST
-- LPTVSTEXM
-
-### MOL (2 tables)
-
-- MOLGT
-- MOLGTDT
-
 ### MOTP (2 tables)
-
 - MOTP
 - MOTPDT
 
-### OPDLED (2 tables)
-
-- OPDLEDCALL
-- OPDLEDDCTPT
-
-### OPPOST (2 tables)
-
-- OPPOSTOPDIAG
+### OP (5 tables)
 - OPPOSTOPERATION
-
-### OPPROC (2 tables)
-
 - OPPROCEDURE
 - OPPROCEDUREDCT
-
-### OPRT (2 tables)
-
 - OPRTACT
-- OPRTACTICD9CM
-
-### ANCHISTORY (1 tables)
-
-- ANCHISTORY
-
-### ANC (1 tables)
-
-- ANCNO
-
-### ANCPLACE (1 tables)
-
-- ANCPLACE
-
-### ANCVST (1 tables)
-
-- ANCVST
-
-### ANPR (1 tables)
-
-- ANPREOP
-
-### BDUNIT (1 tables)
-
-- BDUNITSTAT
-
-### BLOO (1 tables)
-
-- BLOODTEST
-
-### BOOK (1 tables)
-
-- BOOKST
-
-### CANC (1 tables)
-
-- CANCELCS
-
-### CHAN (1 tables)
-
-- CHANGWAT
-
-### CLAIMLCT (1 tables)
-
-- CLAIMLCT
-
-### CLAIMTITLE (1 tables)
-
-- CLAIMTITLE
-
-### CLINICLCT (1 tables)
-
-- CLINICLCT
-
-### CLINICTYPE (1 tables)
-
-- CLINICTYPE
-
-### DCHS (1 tables)
-
-- DCHST
-
-### DCHT (1 tables)
-
-- DCHTYPE
-
-### DIAG (1 tables)
-
-- DIAGTYPE
-
-### DLAN (1 tables)
-
-- DLANORMAL
-
-### DLMED (1 tables)
-
-- DLMEDICATION
-
-### DL (1 tables)
-
-- DLPLCNTTYPE
-
-### DLPOS (1 tables)
-
-- DLPOSITION
-
-### DLRUP (1 tables)
-
-- DLRUPTURETYPE
-
-### EMRG (1 tables)
-
-- EMRGNCY
-
-### ERIL (1 tables)
-
-- ERILLNESS
-
-### ERZO (1 tables)
-
-- ERZONELCT
-
-### EYEASSESS (1 tables)
-
-- EYEASSESSMENT
-
-### HIVT (1 tables)
-
-- HIVTEST
-
-### HRPO (1 tables)
-
-- HRPOSITION
-
-### ICD1 (1 tables)
-
-- ICD10
-
-### ICD9 (1 tables)
-
-- ICD9CM
-
-### INCG (1 tables)
-
-- INCGRP
-
-### INCPRVLG (1 tables)
-
-- INCPRVLG
-
-### INCPT (1 tables)
-
-- INCPT
-
-### IPTSUMM (1 tables)
-
-- IPTSUMMARY
-
-### ISPM (1 tables)
-
-- ISPMCREC
-
-### ISPT (1 tables)
-
-- ISPTYPE
-
-### ISPU (1 tables)
-
-- ISPUSEMC
-
-### LABGRP (1 tables)
-
-- LABGRP
-
-### LCT (1 tables)
-
-- LCT
-
-### LCTT (1 tables)
-
-- LCTTYPE
-
-### LPTE (1 tables)
-
-- LPTEXM
-
-### LVST (1 tables)
-
-- LVST
-
-### MAIN (1 tables)
-
-- MAINHPT
-
-### MALE (1 tables)
-
-- MALE
-
-### MEDACC (1 tables)
-
-- MEDACCNATION
-
-### MEDCTRL (1 tables)
-
-- MEDCTRLTYPE
-
-### MEDCURE (1 tables)
-
-- MEDCURE
-
-### MEDDORD (1 tables)
-
-- MEDDORDTYPE
-
-### NTNL (1 tables)
-
-- NTNLTY
-
-### OAPP (1 tables)
-
-- OAPP
-
-### OCCP (1 tables)
-
-- OCCPTN
-
-### OPIN (1 tables)
-
-- OPINTRAOP
-
-### OPREQ (1 tables)
-
 - OPREQVST
 
-### OPVS (1 tables)
 
-- OPVST
+### ANC(4 tables)
+- ANCHISTORY
+- ANCNO
+- ANCPLACE
+- ANCVST
 
-### ORGA (1 tables)
+### CLINIC (2 tables)
+- CLINICLCT
+- CLINICTYPE
 
-- ORGANISM
+### DCH (2 tables)
+- DCHST
+- DCHTYPE
 
-### ORRO (1 tables)
+### DL (4 tables)
+- DLANORMAL
+- DLMEDICATION
+- DLPLCNTTYPE
+- DLPOSITION
 
-- ORROOM
+### ICD (2 tables)
+- ICD10
+- ICD9CM
 
-### PAID (1 tables)
+### INC (3 tables)
+- INCGRP
+- INCPRVLG
+- INCPT
 
-- PAIDST
+### ISP (3 tables)
+- ISPMCREC
+- ISPTYPE
+- ISPUSEMC
 
-### PTALLERGY (1 tables)
+### LCT (2 tables)
+- LCT
+- LCTTYPE
 
-- PTALLERGY
 
-### RAPP (1 tables)
-
-- RAPP
-
-### RDOEXM (1 tables)
-
+### RDO (2 tables)
 - RDOEXM
-
-### RDO (1 tables)
-
 - RDOGRP
 
-### REQS (1 tables)
-
-- REQST
-
-### RHTE (1 tables)
-
-- RHTEST
-
-### RMDT (1 tables)
-
-- RMDT
-
-### RVST (1 tables)
-
-- RVST
-
-### RVSTDR (1 tables)
-
-- RVSTDR
-
-### RVSTEXM (1 tables)
-
-- RVSTEXM
-
-### RVSTST (1 tables)
-
-- RVSTST
-
-### SPCL (1 tables)
-
-- SPCLTY
-
-### SSHP (1 tables)
-
-- SSHPT
-
-### STRE (1 tables)
-
-- STRENGTHUNIT
-
-### TPHA (1 tables)
-
-- TPHATEST
-
-### TREA (1 tables)
-
-- TREATLINE
-
-### TRNS (1 tables)
-
-- TRNSPORT
-
-### UNIT (1 tables)
-
-- UNIT
-
-### VOLU (1 tables)
-
-- VOLUMEUNIT
-
-### WSKI (1 tables)
-
-- WSKIOSKVISITID
-
-## Inferred Relationships (459 total)
+## Inferred Relationships 
 
 ### High Confidence (universal keys)
 
@@ -1020,3 +672,30 @@
 | PRSCDORD | prscno | PRSC | PRSC |
 | PRSCDT | prvno | PRSC | PRSC |
 | PRSCDTEXT | prscno | PRSC | PRSC |
+
+## Family Header Map (Auto-Detected)
+
+Detail tables that lack universal keys (hn/an/vn) and must JOIN through their
+family header to reach patient identifiers. Generated by `detect_family_headers()`
+in `schema_parser.py`.
+
+| Family | Header | Header Keys | Detail Table | Missing Keys | Join Column |
+|--------|--------|-------------|-------------|--------------|-------------|
+| ANC | ANCVST | hn, an, vn | ANCHISTORY | hn, an, vn | ancno |
+| ARPT | ARPT | hn, an | ARPTINC | hn, an | arno |
+| DCTORDER | DCTORDERPRSC | hn, an | DCTORDERPATHOPREG | an | hn |
+| DLVST | DLVSTEXT | hn, an | DLVST | hn, an | dlvstreqno |
+| DLVST | DLVSTEXT | hn, an | DLVSTAFBRTHSIGN | hn, an | dlvstreqno |
+| DLVST | DLVSTEXT | hn, an | DLVSTDESC | hn, an | dlvstreqno |
+| IPT | IPT | hn, an | IPTSUMDIAG | hn | an |
+| IPT | IPT | hn, an | IPTSUMOPRT | hn | an |
+| IPTADM | IPTADM | an | IPTADMIST | an | iptadmist |
+| IPTBOOK | IPTBOOKBEDICU | hn, an | IPTBOOKBEDICU2 | an | hn |
+| IPTBOOK | IPTBOOKBEDICU | hn, an | IPTBOOKBEDICUHST | an | hn |
+| LVSTEXM | LVSTEXM | hn, an | LVSTEXMBAC1 | hn, an | labno |
+| LVSTEXM | LVSTEXM | hn, an | LVSTEXMBAC2 | hn, an | labno |
+| OPDDCT | OPDDCTORDER | hn, an | OPDDCTPRSC | an | orderno |
+| OVST | OVST | hn, an, vn | OVSTOST | hn, an, vn | ovstost |
+| PRSC | PRSC | hn, an, vn | PRSCDORD | hn, vn | prscno |
+| PRSC | PRSC | hn, an, vn | PRSCDT | hn, an, vn | prvno |
+| PRSC | PRSC | hn, an, vn | PRSCDTEXT | hn, an, vn | prscno |

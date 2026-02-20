@@ -245,26 +245,21 @@ def build_schema_context(
     lines.append("- **Aggregate queries** don't need LIMIT; detail queries require LIMIT")
     lines.append("")
 
-    # Add header-detail patterns section (from CSV requires_join_table metadata)
-    detail_tables: dict[str, set[str]] = {}  # header_table -> set of detail tables
-    for table_name in tables_to_include:
-        table = catalog.get_table(table_name)
-        if not table:
-            continue
-        for col in table.columns.values():
-            if col.requires_join_table:
-                header = col.requires_join_table
-                if table_name not in detail_tables:
-                    detail_tables[table_name] = set()
-                detail_tables[table_name].add(header)
-
-    if detail_tables:
-        lines.append("### Header-Detail Table Patterns (CRITICAL)")
-        lines.append("Detail tables without hn/vn must JOIN to header for patient identifier:")
+    # Add header-detail join rules (auto-detected from family_headers)
+    if catalog.family_headers:
+        lines.append("### Header-Detail Join Rules (CRITICAL)")
+        lines.append("These tables do NOT have all universal keys.")
+        lines.append("JOIN to header table for patient identifiers:")
         lines.append("")
-        for detail_name, headers in sorted(detail_tables.items()):
-            for header in sorted(headers):
-                lines.append(f"- **{detail_name}** → JOIN **{header}** for patient identifier (hn/vn)")
+        for _header, info in sorted(catalog.family_headers.items()):
+            for detail in info.details:
+                missing_str = "/".join(detail.missing_keys)
+                lines.append(
+                    f"- {detail.table_name}: no {missing_str}"
+                    f" -> JOIN {info.header_table}"
+                    f" ON {detail.table_name}.{detail.join_column}"
+                    f" = {info.header_table}.{detail.header_join_column}"
+                )
         lines.append("")
 
     # Add performance critical tables section (from CSV performance_hint metadata)
@@ -296,7 +291,7 @@ def build_schema_context(
         if not table:
             continue
         for col in table.columns.values():
-            if col.correction_note and "NOT " in col.correction_note:
+            if col.correction_note and ("NOT " in col.correction_note or "No " in col.correction_note):
                 corrections.append(f"- {table_name}.{col.name}: {col.correction_note}")
 
     if corrections:

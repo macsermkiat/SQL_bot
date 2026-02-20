@@ -98,12 +98,31 @@ class JoinEdge:
 
 
 @dataclass
+class DetailTableInfo:
+    """Detail table that must join through family header for universal keys."""
+    table_name: str
+    missing_keys: list[str]       # e.g., ["hn"]
+    has_keys: list[str]           # e.g., ["an"]
+    join_column: str              # e.g., "an"
+    header_join_column: str       # e.g., "an"
+
+
+@dataclass
+class FamilyHeaderInfo:
+    """Family header table and its detail tables needing join guidance."""
+    header_table: str
+    header_keys: list[str]        # e.g., ["hn", "an"]
+    details: list[DetailTableInfo] = field(default_factory=list)
+
+
+@dataclass
 class SchemaKnowledge:
     """Complete schema knowledge for SQL generation."""
     tables: dict[str, Table] = field(default_factory=dict)
     join_edges: list[JoinEdge] = field(default_factory=list)
     universal_keys: frozenset[str] = field(default_factory=lambda: UNIVERSAL_KEYS)
     families: dict[str, list[str]] = field(default_factory=dict)
+    family_headers: dict[str, FamilyHeaderInfo] = field(default_factory=dict)
     phi_columns: frozenset[str] = field(default_factory=lambda: PHI_COLUMNS)
 
     def get_table(self, name: str) -> Table | None:
@@ -218,12 +237,33 @@ class SchemaKnowledge:
             ],
             "universal_keys": sorted(self.universal_keys),
             "families": {k: sorted(v) for k, v in self.families.items()},
+            "family_headers": {
+                header: {
+                    "header_table": info.header_table,
+                    "header_keys": info.header_keys,
+                    "details": [
+                        {
+                            "table_name": d.table_name,
+                            "missing_keys": d.missing_keys,
+                            "has_keys": d.has_keys,
+                            "join_column": d.join_column,
+                            "header_join_column": d.header_join_column,
+                        }
+                        for d in info.details
+                    ],
+                }
+                for header, info in self.family_headers.items()
+            },
             "phi_columns": sorted(self.phi_columns),
             "stats": {
                 "total_tables": len(self.tables),
                 "total_columns": sum(len(t.columns) for t in self.tables.values()),
                 "total_join_edges": len(self.join_edges),
                 "total_families": len(self.families),
+                "total_family_headers": len(self.family_headers),
+                "total_detail_tables": sum(
+                    len(fh.details) for fh in self.family_headers.values()
+                ),
             },
         }
 
@@ -289,6 +329,24 @@ class SchemaKnowledge:
 
         # Load metadata
         schema.families = {k: list(v) for k, v in data.get("families", {}).items()}
+
+        # Load family headers
+        for header, hdata in data.get("family_headers", {}).items():
+            details = [
+                DetailTableInfo(
+                    table_name=d["table_name"],
+                    missing_keys=d["missing_keys"],
+                    has_keys=d["has_keys"],
+                    join_column=d["join_column"],
+                    header_join_column=d["header_join_column"],
+                )
+                for d in hdata.get("details", [])
+            ]
+            schema.family_headers[header] = FamilyHeaderInfo(
+                header_table=hdata["header_table"],
+                header_keys=hdata["header_keys"],
+                details=details,
+            )
 
         return schema
 
@@ -481,6 +539,169 @@ def build_families(tables: dict[str, Table]) -> dict[str, list[str]]:
     return {k: sorted(v) for k, v in families.items()}
 
 
+def _find_detail_join_column(
+    detail_table: str,
+    header_table: str,
+    join_edges: list[JoinEdge],
+    tables: dict[str, Table],
+) -> tuple[str, str]:
+    """Find the best join column between a detail and its header table.
+
+    Returns (detail_col, header_col) or ("", "") if none found.
+    Prefers non-universal keys (more specific) over universal keys.
+    """
+    universal = {"hn", "an", "vn"}
+    conf_scores = {"high": 3, "medium": 2, "heuristic": 1}
+    candidates: list[tuple[int, str, str]] = []
+
+    for edge in join_edges:
+        detail_col = ""
+        header_col = ""
+
+        if edge.from_table == detail_table and edge.to_table == header_table:
+            detail_col = edge.from_column
+            header_col = edge.to_column
+        elif edge.from_table == header_table and edge.to_table == detail_table:
+            detail_col = edge.to_column
+            header_col = edge.from_column
+        else:
+            continue
+
+        score = 0
+        if detail_col not in universal:
+            score += 10  # Strongly prefer specific join keys
+        score += conf_scores.get(edge.confidence, 0)
+        candidates.append((score, detail_col, header_col))
+
+    if candidates:
+        candidates.sort(key=lambda x: -x[0])
+        return candidates[0][1], candidates[0][2]
+
+    # Fallback: shared non-universal columns
+    detail_t = tables.get(detail_table)
+    header_t = tables.get(header_table)
+    if detail_t and header_t:
+        shared = (
+            set(detail_t.columns.keys()) - universal
+        ) & (
+            set(header_t.columns.keys()) - universal
+        )
+        if shared:
+            col = sorted(shared)[0]
+            return col, col
+
+    # Last resort: shared universal keys (prefer an > vn > hn)
+    if detail_t and header_t:
+        shared_uk = (
+            {c for c in detail_t.columns if c in universal}
+            & {c for c in header_t.columns if c in universal}
+        )
+        for key in ["an", "vn", "hn"]:
+            if key in shared_uk:
+                return key, key
+
+    return "", ""
+
+
+def detect_family_headers(
+    tables: dict[str, Table],
+    families: dict[str, list[str]],
+    join_edges: list[JoinEdge],
+) -> dict[str, FamilyHeaderInfo]:
+    """Auto-detect family header tables and detail tables missing universal keys.
+
+    For each table family with 2+ members, identifies:
+    - The header table (member with the most universal keys)
+    - Detail tables missing universal keys vs the header
+    - Join columns to reach the header from each detail
+
+    Excludes:
+    - Lookup/reference tables (<=3 columns and no universal keys)
+    - Home tables (PT, IPT, OVST) from being flagged as details
+    """
+    universal = {"hn", "an", "vn"}
+    home_tables = {"PT", "IPT", "OVST"}
+
+    # Which universal keys each table actually has as columns
+    table_keys: dict[str, set[str]] = {}
+    for tname, table in tables.items():
+        table_keys[tname] = {col for col in table.columns if col in universal}
+
+    result: dict[str, FamilyHeaderInfo] = {}
+
+    for family_name, members in families.items():
+        if len(members) < 2:
+            continue
+
+        # Filter out lookup/reference tables
+        candidate_members = []
+        for m in members:
+            t = tables.get(m)
+            if not t:
+                continue
+            keys = table_keys.get(m, set())
+            if len(t.columns) <= 3 and not keys:
+                continue
+            candidate_members.append(m)
+
+        if len(candidate_members) < 2:
+            continue
+
+        # Header = member with the most universal keys
+        # Home tables (PT, IPT, OVST) always preferred as headers
+        # Tie-break: prefer exact family name match, then shortest name
+        family_upper = family_name.upper()
+        header = max(
+            candidate_members,
+            key=lambda m: (
+                1 if m in home_tables else 0,
+                len(table_keys.get(m, set())),
+                1 if m == family_upper else 0,
+                -len(m),
+            ),
+        )
+        header_keys = table_keys.get(header, set())
+
+        if not header_keys:
+            continue
+
+        # Find detail tables missing keys relative to header
+        details: list[DetailTableInfo] = []
+        for m in candidate_members:
+            if m == header or m in home_tables:
+                continue
+
+            m_keys = table_keys.get(m, set())
+            missing = header_keys - m_keys
+
+            if not missing:
+                continue
+
+            join_col, header_join_col = _find_detail_join_column(
+                m, header, join_edges, tables,
+            )
+
+            if not join_col:
+                continue
+
+            details.append(DetailTableInfo(
+                table_name=m,
+                missing_keys=sorted(missing),
+                has_keys=sorted(m_keys),
+                join_column=join_col,
+                header_join_column=header_join_col,
+            ))
+
+        if details:
+            result[header] = FamilyHeaderInfo(
+                header_table=header,
+                header_keys=sorted(header_keys),
+                details=sorted(details, key=lambda d: d.table_name),
+            )
+
+    return result
+
+
 def generate_schema_knowledge(
     schema_dir: Path | None = None,
     output_path: Path | None = None,
@@ -525,11 +746,15 @@ def generate_schema_knowledge(
     # Build families
     families = build_families(tables)
 
+    # Detect family headers and detail tables
+    family_headers = detect_family_headers(tables, families, join_edges)
+
     # Create schema knowledge
     schema = SchemaKnowledge(
         tables=tables,
         join_edges=join_edges,
         families=families,
+        family_headers=family_headers,
     )
 
     # Save to JSON
@@ -537,11 +762,13 @@ def generate_schema_knowledge(
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(schema.to_dict(), f, indent=2, ensure_ascii=False)
 
+    detail_count = sum(len(fh.details) for fh in schema.family_headers.values())
     print(f"Generated schema knowledge:")
     print(f"  - Tables: {len(schema.tables)}")
     print(f"  - Columns: {sum(len(t.columns) for t in schema.tables.values())}")
     print(f"  - Join edges: {len(schema.join_edges)}")
     print(f"  - Families: {len(schema.families)}")
+    print(f"  - Family headers: {len(schema.family_headers)} ({detail_count} detail tables)")
     print(f"  - Output: {output_path}")
 
     return schema

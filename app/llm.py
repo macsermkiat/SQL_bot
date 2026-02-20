@@ -131,6 +131,7 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 - Blood pressure/vitals -> OVSTPRESS
 - ICU bookings -> IPTBOOKBEDICU
 - Radiology/imaging -> RDOEXM
+- Detail tables may lack hn/vn/an. Check "Header-Detail Join Rules" in schema context for required JOINs.
 
 ## PERFORMANCE
 - Pre-filter ref tables in CTEs, INNER JOIN to transaction tables.
@@ -139,11 +140,17 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 - Numeric text (lab results): CASE WHEN col ~ '^[0-9]+(\\.[0-9]+)?$' THEN CAST(col AS NUMERIC) END
 
 ## KEY PATTERNS
-ICD lookup:
+ICD lookup (OPD - PTDIAG has hn):
 ```sql
 WITH codes AS (SELECT "icd10" FROM "KCMH_HIS"."ICD10" WHERE "icd10" LIKE 'E11%')
 SELECT COUNT(DISTINCT d."hn") FROM "KCMH_HIS"."PTDIAG" d
 INNER JOIN codes c ON d."icd10"=c."icd10" WHERE d."vstdate">='{last_year}-01-01'
+```
+ICD lookup (IPD - IPTSUMDIAG has NO hn, must JOIN IPT):
+```sql
+SELECT COUNT(DISTINCT ipt."hn") FROM "KCMH_HIS"."IPTSUMDIAG" d
+INNER JOIN "KCMH_HIS"."IPT" ipt ON d."an"=ipt."an"
+WHERE d."icd10" LIKE 'E11%' AND ipt."dchdate">='{last_year}-01-01'
 ```
 Drug lookup (never hardcode codes):
 ```sql

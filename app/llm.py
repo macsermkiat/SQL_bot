@@ -117,6 +117,7 @@ Schema marks: n=numeric, t=text, d=date, b=bool. Match literals to types:
 - Numeric cols: WHERE x IN (1,2) not ('A','B'). LIKE only on text cols.
 - Drug search: MEDITEMDIS."tradename" LIKE '%%keyword%%'. "brandname" is numeric, never LIKE. Join: PRSCDT.meditem=MEDITEMDIS.meditem.
 - NEVER fabricate codes. Always query reference tables dynamically.
+- ICD-9-CM codes (icd9cm columns) are stored WITHOUT dots. '47.01' is stored as '4701', '47.09' as '4709'. Use LIKE '470%' NOT '47.0%'. Applies to: IPTSUMOPRT, PTICD9CM, PTOPRT, ICD9CM, OPRTACT.
 - Use IS NULL not =NULL. LOWER() for case-insensitive text. Status codes are often numeric.
 
 ## TABLE SCHEMA
@@ -127,6 +128,9 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 
 ## TABLE ROUTING (use the RIGHT table)
 - Emergency/ER visits -> CNER (NOT OVST.emrgncy which is just urgency triage level)
+- Emergency vs elective surgery -> OPREQVST.optype (1=Elective, 2=Emergency). IPT.receiveflag is NOT populated.
+- Surgery/procedure dates -> IPTSUMOPRT.indate or PTOPRT.oprtdatein (actual procedure times)
+- OR scheduling/surgery details -> OPREQVST (has an, optype, estmdate)
 - Delivery/birth -> DLVST, DLVSTDESC, DLVSTEXT
 - Blood pressure/vitals -> OVSTPRESS
 - ICU bookings -> IPTBOOKBEDICU

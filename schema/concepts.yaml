@@ -123,6 +123,31 @@ medication_lookup:
     WARNING: brandname is NUMERIC - do NOT use LIKE on it.
     Prescription chain: PRSC (prescription header, has hn/prscdate) -> PRSCDT (prescription detail, has meditem) -> MEDITEMDIS (drug master, has medname).
 
+icd_code_format:
+  description: "ICD code storage format in this database"
+  notes: >
+    CRITICAL: ICD-9-CM codes in icd9cm columns are stored WITHOUT dots/periods.
+    Standard '47.01' is stored as '4701'. Standard '47.09' is stored as '4709'.
+    When filtering: use LIKE '470%' NOT LIKE '47.0%'.
+    Examples: appendectomy = '4701','4709' (LIKE '470%'). Cholecystectomy = '5121','5122' (LIKE '512%').
+    This applies to ALL tables with icd9cm column: IPTSUMOPRT, PTICD9CM, PTOPRT, ICD9CM, OPRTACT.
+
+surgery_inpatient:
+  description: "Inpatient surgery/procedure lookup and emergency surgery identification"
+  tables:
+    - "IPTSUMOPRT"
+    - "PTOPRT"
+    - "OPREQVST"
+  notes: >
+    For inpatient procedures, three table options:
+    - IPTSUMOPRT: medical records summary with icd9cm code. Join IPT via an. Has indate/outdate.
+    - PTOPRT: transactional procedure records with icd9cm, oprtact code, and actual times (oprtdatein/oprtdateout). Join IPT via an.
+    - OPREQVST: OR scheduling with optype (1=Elective, 2=Emergency), estmdate (surgery date). Join IPT via an.
+    CRITICAL: icd9cm codes have NO dots. Use '470%' not '47.0%' for appendectomy.
+    IPT.receiveflag is NOT populated - do not use it for ER identification.
+    For emergency vs elective surgery, use OPREQVST.optype = 2 (Emergency).
+    LOS calculation: IPT.dchdate::date - IPT.rgtdate::date.
+
 opd_visit:
   description: "Outpatient department visit"
   tables:
@@ -135,13 +160,6 @@ ipd_admission:
     - "IPT"
   notes: "Primary key is an (admission number)"
 
-emergency_visit:
-  description: "Emergency department visit"
-  condition: "ovstist = 'ER' OR cliniclct IN (SELECT cliniclct FROM CLINICLCT WHERE prefix LIKE 'ER%')"
-  tables:
-    - "OVST"
-    - "CLINICLCT"
-  notes: "May need to verify ER clinic codes in CLINICLCT"
 
 blood_pressure_vital:
   description: "Blood pressure measurement from vital signs (OVSTPRESS table)"

@@ -418,7 +418,50 @@ class ChatOrchestrator:
                     confidence="low",
                 )
 
-        # Step 8: Run sanity checks
+        # Step 8a: Zero-result retry with extended thinking
+        if result is not None and result.row_count == 0:
+            logger.info("Zero-result retry: query returned 0 rows, retrying with extended thinking")
+            zero_errors = [{
+                "sql": sql,
+                "error": (
+                    "Query returned 0 rows. The query executed successfully "
+                    "but found no matching data. Try different tables, "
+                    "columns, or filter conditions."
+                ),
+                "stage": "zero_results",
+            }]
+            retry_gen, retry_usage = self._retry_with_accumulated_errors(
+                question, zero_errors, history,
+            )
+            if retry_usage:
+                _accumulate(retry_usage)
+
+            if retry_gen and retry_gen.sql:
+                retry_val = validate_sql(
+                    sql=retry_gen.sql, catalog=self.catalog,
+                    max_rows=self._settings.sql_max_rows,
+                    strict_catalog_check=True,
+                )
+                if retry_val.valid:
+                    is_valid_retry, _ = db.explain_query(
+                        sql=retry_gen.sql, timeout_ms=5000,
+                    )
+                    if is_valid_retry:
+                        try:
+                            retry_result = db.execute_query(
+                                sql=retry_gen.sql,
+                                timeout_ms=execution_timeout,
+                                max_rows=self._settings.sql_max_rows,
+                            )
+                            if retry_result.row_count > 0:
+                                result = retry_result
+                                sql = retry_gen.sql
+                                gen_response = retry_gen
+                                logger.info("Zero-result retry succeeded with %d rows", result.row_count)
+                        except Exception as retry_e:
+                            logger.warning("Zero-result retry execution failed: %s", retry_e)
+
+        # Step 8b: Run sanity checks
         sanity_results = run_sanity_checks(result, gen_response.validation_checks)
 
         # Check if any critical sanity check failed
@@ -682,6 +725,21 @@ class ChatOrchestrator:
                 "Do NOT guess or invent column names."
             )
 
+        has_zero_results = any(
+            "zero rows" in e.get("error", "").lower()
+            or "returned 0 rows" in e.get("error", "").lower()
+            for e in accumulated_errors
+        )
+        if has_zero_results:
+            parts.append(
+                "ZERO RESULTS FIX: The query returned 0 rows. Try a DIFFERENT approach:\n"
+                "1) Use different tables (e.g. IPTSUMOPRT instead of PTOPRT for icd9cm)\n"
+                "2) Check date column names (vstdate vs lvstdate vs indate)\n"
+                "3) Broaden filter values (LIKE '%%keyword%%' instead of exact match)\n"
+                "4) Verify join conditions - a wrong join can silently filter out all rows\n"
+                "5) Check if the column you're filtering on is actually populated"
+            )
+
         return "\n\n".join(parts)
 
     def _retry_with_accumulated_errors(
@@ -906,6 +964,7 @@ class ChatOrchestrator:
         result: QueryResult | None = None
         complexity: Any = None
         complexity_warning: str | None = None
+        zero_result_retried = False
 
         for attempt in range(total_attempts):
             is_retry = attempt > 0
@@ -1118,7 +1177,25 @@ class ChatOrchestrator:
                     )
                     return
 
-            # Execution succeeded — break out of retry loop
+            # Execution succeeded — check for zero results before breaking
+            if (
+                result is not None
+                and result.row_count == 0
+                and not zero_result_retried
+            ):
+                zero_result_retried = True
+                accumulated_errors.append({
+                    "sql": sql,
+                    "error": (
+                        "Query returned 0 rows. The query executed successfully "
+                        "but found no matching data. Try different tables, "
+                        "columns, or filter conditions."
+                    ),
+                    "stage": "zero_results",
+                })
+                logger.info("Zero-result retry: query returned 0 rows, retrying with extended thinking")
+                continue
+
             break
         else:
             # All attempts exhausted

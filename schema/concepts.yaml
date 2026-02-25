@@ -140,9 +140,10 @@ surgery_inpatient:
     - "OPREQVST"
   notes: >
     For inpatient procedures, three table options:
-    - IPTSUMOPRT: medical records summary with icd9cm code. Join IPT via an. Has indate/outdate.
-    - PTOPRT: transactional procedure records with icd9cm, oprtact code, and actual times (oprtdatein/oprtdateout). Join IPT via an.
+    - IPTSUMOPRT: RELIABLE source for icd9cm procedure codes. Medical records summary. Join IPT via an. Has indate/outdate.
+    - PTOPRT: transactional procedure records with oprtact code and actual times (oprtdatein/oprtdateout). Join IPT via an. WARNING: PTOPRT.icd9cm is mostly EMPTY - do NOT rely on it for ICD-9-CM lookups.
     - OPREQVST: OR scheduling with optype (1=Elective, 2=Emergency), estmdate (surgery date). Join IPT via an.
+    CRITICAL: For ICD-9-CM procedure code lookups, ALWAYS use IPTSUMOPRT.icd9cm (NOT PTOPRT.icd9cm which is mostly empty).
     CRITICAL: icd9cm codes have NO dots. Use '470%' not '47.0%' for appendectomy.
     IPT.receiveflag is NOT populated - do not use it for ER identification.
     For emergency vs elective surgery, use OPREQVST.optype = 2 (Emergency).

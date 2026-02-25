@@ -4,7 +4,7 @@
 {% block body_class %}login-page{% endblock %}
 
 {% block content %}
-<div class="login-container">
+<div id="main-content" class="login-container">
     <div class="login-card">
         <div class="login-header">
             <h1>KCMH SQL Bot</h1>
@@ -12,7 +12,7 @@
         </div>
 
         {% if error %}
-        <div class="login-error">{{ error }}</div>
+        <div class="login-error" role="alert" aria-live="assertive">{{ error }}</div>
         {% endif %}
 
         <form method="POST" action="/login" class="login-form">

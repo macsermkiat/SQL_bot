@@ -110,10 +110,12 @@
         progressDiv.innerHTML =
             '<div class="message-content progress-content">' +
             '<div class="progress-indicator">' +
-            '<div class="progress-spinner"></div>' +
-            '<span class="progress-text">Starting...</span>' +
+            '<div class="progress-spinner" aria-hidden="true"></div>' +
+            '<span class="progress-text" aria-live="polite">Starting...</span>' +
             "</div>" +
-            '<div class="progress-bar-container">' +
+            '<div class="progress-bar-container" role="progressbar" ' +
+            'aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" ' +
+            'aria-label="Query progress">' +
             '<div class="progress-bar" style="width: 0%"></div>' +
             "</div>" +
             "</div>";
@@ -127,9 +129,11 @@
 
         var textEl = progressMsg.querySelector(".progress-text");
         var barEl = progressMsg.querySelector(".progress-bar");
+        var barContainer = progressMsg.querySelector(".progress-bar-container");
 
         if (textEl) textEl.textContent = message;
         if (barEl) barEl.style.width = progress + "%";
+        if (barContainer) barContainer.setAttribute("aria-valuenow", Math.round(progress));
 
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
@@ -421,8 +425,15 @@
         stopQuery();
     });
 
+    document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && abortController) {
+            stopQuery();
+        }
+    });
+
     inputForm.addEventListener("submit", function (e) {
         e.preventDefault();
+        if (abortController) return;
         var message = messageInput.value.trim();
         if (!message) return;
         messageInput.value = "";

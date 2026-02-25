@@ -1,24 +1,35 @@
 /* Space Theme - KCMH SQL Bot */
 
 :root {
+    /* Background & Surface */
     --space-bg: #0a0e27;
-    --space-surface: #1a1f3a;
-    --space-card: rgba(26, 31, 58, 0.85);
-    --space-border: rgba(255, 255, 255, 0.08);
     --space-purple: #2d1b69;
+    --glass-bg: rgba(15, 23, 42, 0.75);
+    --glass-border: rgba(255, 255, 255, 0.1);
+
+    /* Accent */
     --accent-cyan: #00d4ff;
-    --accent-purple: #8b5cf6;
+    --accent-cyan-hover: #33dfff;
     --accent-glow: rgba(0, 212, 255, 0.3);
-    --accent-purple-glow: rgba(139, 92, 246, 0.25);
+    --accent-purple: #8b5cf6;
+    --accent-purple-deep: #4338ca;
+
+    /* Text */
     --text-primary: #e2e8f0;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
+
+    /* Semantic */
     --success: #22c55e;
     --warning: #eab308;
+    --warning-light: #fbbf24;
+    --warning-bright: #facc15;
     --danger: #ef4444;
-    --glass-bg: rgba(15, 23, 42, 0.75);
-    --glass-border: rgba(255, 255, 255, 0.1);
-    --glass-border-hover: rgba(255, 255, 255, 0.18);
+    --danger-deep: #b91c1c;
+    --danger-light: #fca5a5;
+
+    /* Typography */
+    --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', Monaco, 'Courier New', monospace;
 }
 
 * {
@@ -168,7 +179,7 @@ canvas#starfield {
 .login-error {
     background: rgba(239, 68, 68, 0.12);
     border: 1px solid rgba(239, 68, 68, 0.25);
-    color: #fca5a5;
+    color: var(--danger-light);
     padding: 0.75rem 1rem;
     border-radius: 0.5rem;
     font-size: 0.875rem;
@@ -246,6 +257,18 @@ canvas#starfield {
     box-shadow: 0 0 12px var(--accent-glow);
 }
 
+/* Error page variants */
+
+.login-card--centered {
+    text-align: center;
+}
+
+.login-button--link {
+    display: inline-block;
+    text-decoration: none;
+    text-align: center;
+}
+
 /* ================================================================
    CHAT PAGE
    ================================================================ */
@@ -305,9 +328,10 @@ canvas#starfield {
 
 .logout-button {
     padding: 0.375rem 0.875rem;
+    min-height: 2.75rem;
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid var(--glass-border);
-    border-radius: 0.375rem;
+    border-radius: 0.5rem;
     color: var(--text-secondary);
     font-size: 0.8125rem;
     cursor: pointer;
@@ -317,7 +341,7 @@ canvas#starfield {
 .logout-button:hover {
     background: rgba(239, 68, 68, 0.15);
     border-color: rgba(239, 68, 68, 0.3);
-    color: #fca5a5;
+    color: var(--danger-light);
 }
 
 /* Chat area */
@@ -400,7 +424,7 @@ canvas#starfield {
 }
 
 .message.user .message-content {
-    background: linear-gradient(135deg, var(--accent-purple), #4338ca);
+    background: linear-gradient(135deg, var(--accent-purple), var(--accent-purple-deep));
     color: white;
     border-bottom-right-radius: 0.25rem;
     box-shadow: 0 2px 12px rgba(139, 92, 246, 0.2);
@@ -428,11 +452,16 @@ canvas#starfield {
     align-items: center;
 }
 
-.confidence-badge {
+.confidence-badge,
+.query-stat,
+.token-stat {
     font-size: 0.75rem;
     padding: 0.2rem 0.625rem;
     border-radius: 1rem;
     font-weight: 500;
+}
+
+.confidence-badge {
     letter-spacing: 0.01em;
 }
 
@@ -455,20 +484,12 @@ canvas#starfield {
 }
 
 .query-stat {
-    font-size: 0.75rem;
-    padding: 0.2rem 0.625rem;
-    border-radius: 1rem;
-    font-weight: 500;
     background: rgba(255, 255, 255, 0.04);
     color: var(--text-muted);
     border: 1px solid var(--glass-border);
 }
 
 .token-stat {
-    font-size: 0.75rem;
-    padding: 0.2rem 0.625rem;
-    border-radius: 1rem;
-    font-weight: 500;
     background: rgba(139, 92, 246, 0.08);
     color: var(--accent-purple);
     border: 1px solid rgba(139, 92, 246, 0.2);
@@ -485,6 +506,9 @@ canvas#starfield {
     font-size: 0.8125rem;
     color: var(--accent-cyan);
     padding: 0.3rem 0;
+    min-height: 2.75rem;
+    display: flex;
+    align-items: center;
     user-select: none;
     transition: color 0.2s;
     list-style: none;
@@ -508,7 +532,7 @@ canvas#starfield {
 }
 
 .expandable summary:hover {
-    color: #33dfff;
+    color: var(--accent-cyan-hover);
 }
 
 .expandable-content {
@@ -517,7 +541,7 @@ canvas#starfield {
     border-radius: 0.5rem;
     padding: 0.875rem 1rem;
     margin-top: 0.375rem;
-    font-family: 'SF Mono', 'Fira Code', Monaco, 'Courier New', monospace;
+    font-family: var(--font-mono);
     font-size: 0.8125rem;
     overflow-x: auto;
     white-space: pre-wrap;
@@ -634,7 +658,7 @@ canvas#starfield {
     align-items: center;
     justify-content: center;
     padding: 0.75rem 1.5rem;
-    background: linear-gradient(135deg, var(--danger), #b91c1c);
+    background: linear-gradient(135deg, var(--danger), var(--danger-deep));
     color: white;
     border: none;
     border-radius: 0.5rem;
@@ -706,45 +730,6 @@ canvas#starfield {
 }
 
 /* ================================================================
-   LOADING INDICATOR (legacy fallback)
-   ================================================================ */
-
-.loading {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    color: var(--text-secondary);
-}
-
-.loading-dots {
-    display: flex;
-    gap: 0.3rem;
-}
-
-.loading-dots span {
-    width: 0.5rem;
-    height: 0.5rem;
-    background: var(--accent-cyan);
-    border-radius: 50%;
-    animation: pulse 1.4s infinite ease-in-out both;
-    box-shadow: 0 0 6px rgba(0, 212, 255, 0.4);
-}
-
-.loading-dots span:nth-child(1) { animation-delay: -0.32s; }
-.loading-dots span:nth-child(2) { animation-delay: -0.16s; }
-
-@keyframes pulse {
-    0%, 80%, 100% {
-        transform: scale(0);
-        opacity: 0.3;
-    }
-    40% {
-        transform: scale(1);
-        opacity: 1;
-    }
-}
-
-/* ================================================================
    ERROR / WARNING
    ================================================================ */
 
@@ -761,7 +746,7 @@ canvas#starfield {
     padding: 0.5rem 0.75rem;
     background: rgba(234, 179, 8, 0.08);
     border: 1px solid rgba(234, 179, 8, 0.18);
-    border-radius: 0.375rem;
+    border-radius: 0.5rem;
 }
 
 /* ================================================================
@@ -778,7 +763,7 @@ canvas#starfield {
 
 .auto-fix-header {
     font-weight: 600;
-    color: #fbbf24;
+    color: var(--warning-light);
     font-size: 0.9375rem;
     margin-bottom: 0.5rem;
 }
@@ -789,11 +774,11 @@ canvas#starfield {
 }
 
 .auto-fix-error {
-    color: #fca5a5;
+    color: var(--danger-light);
     font-size: 0.8125rem;
-    font-family: "Fira Code", "Cascadia Code", monospace;
+    font-family: var(--font-mono);
     background: rgba(239, 68, 68, 0.08);
-    border-radius: 0.375rem;
+    border-radius: 0.5rem;
     padding: 0.5rem 0.75rem;
     margin-bottom: 0.75rem;
     word-break: break-word;
@@ -814,7 +799,7 @@ canvas#starfield {
     color: var(--text-secondary);
     font-size: 0.75rem;
     background: rgba(0, 0, 0, 0.3);
-    border-radius: 0.375rem;
+    border-radius: 0.5rem;
     padding: 0.5rem 0.75rem;
     max-height: 8rem;
     overflow-y: auto;
@@ -823,7 +808,7 @@ canvas#starfield {
 }
 
 .auto-fix-countdown-row {
-    color: #fbbf24;
+    color: var(--warning-light);
     font-size: 0.875rem;
     font-weight: 500;
 }
@@ -832,7 +817,7 @@ canvas#starfield {
     display: inline-block;
     font-size: 1.125rem;
     font-weight: 700;
-    color: #facc15;
+    color: var(--warning-bright);
     min-width: 1.25rem;
     text-align: center;
 }
@@ -842,7 +827,7 @@ canvas#starfield {
 }
 
 .auto-fix-fixing {
-    color: var(--accent);
+    color: var(--accent-cyan);
     font-weight: 600;
     animation: fadeInBanner 0.3s ease;
 }
@@ -858,13 +843,82 @@ canvas#starfield {
 }
 
 .auto-fix-retry-note {
-    color: #fbbf24;
+    color: var(--warning-light);
     font-weight: 600;
     font-size: 0.875rem;
     margin-bottom: 0.5rem;
     display: flex;
     align-items: center;
     gap: 0.25rem;
+}
+
+/* ================================================================
+   SKIP LINK (Accessibility)
+   ================================================================ */
+
+.skip-link {
+    position: absolute;
+    top: -100%;
+    left: 0;
+    z-index: 100;
+    padding: 0.75rem 1.5rem;
+    background: var(--accent-cyan);
+    color: var(--space-bg);
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0 0 0.5rem 0;
+    transition: top 0.2s;
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
+/* ================================================================
+   FOCUS VISIBLE (Accessibility)
+   ================================================================ */
+
+.login-button:focus-visible,
+.send-button:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 2px;
+}
+
+.logout-button:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 2px;
+}
+
+.stop-button:focus-visible {
+    outline: 2px solid white;
+    outline-offset: 2px;
+}
+
+.expandable summary:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+}
+
+/* ================================================================
+   REDUCED MOTION (Accessibility)
+   ================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    canvas#starfield {
+        display: none;
+    }
+
+    .progress-spinner {
+        animation: none;
+        border-color: var(--accent-cyan);
+    }
 }
 
 /* ================================================================
@@ -915,5 +969,27 @@ canvas#starfield {
 
     .message {
         max-width: 80%;
+    }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+    .chat-header {
+        padding: 0.375rem 1rem;
+    }
+
+    .header-left h1 {
+        font-size: 1rem;
+    }
+
+    .header-subtitle {
+        display: none;
+    }
+
+    .input-form {
+        padding: 0.5rem;
+    }
+
+    .message-input {
+        padding: 0.5rem 0.75rem;
     }
 }

@@ -8,7 +8,8 @@
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
-    <canvas id="starfield"></canvas>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <canvas id="starfield" aria-hidden="true"></canvas>
 
     {% block content %}{% endblock %}
 

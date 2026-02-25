@@ -38,6 +38,8 @@
     var stars = [];
     var nebulaParticles = [];
     var width, height, centerX, centerY;
+    var animationId = null;
+    var paused = false;
 
     function rand(min, max) {
         return min + Math.random() * (max - min);
@@ -227,12 +229,27 @@
             ctx.fill();
         }
 
-        requestAnimationFrame(draw);
+        if (!paused) {
+            animationId = requestAnimationFrame(draw);
+        }
     }
 
     window.addEventListener("resize", function () {
         resize();
         initStars();
+    });
+
+    document.addEventListener("visibilitychange", function () {
+        if (document.hidden) {
+            paused = true;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+        } else {
+            paused = false;
+            animationId = requestAnimationFrame(draw);
+        }
     });
 
     resize();
@@ -242,5 +259,5 @@
     ctx.fillStyle = "rgb(10, 14, 39)";
     ctx.fillRect(0, 0, width, height);
 
-    requestAnimationFrame(draw);
+    animationId = requestAnimationFrame(draw);
 })();

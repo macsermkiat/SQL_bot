@@ -17,15 +17,15 @@
     </div>
 </header>
 
-<main class="chat-main">
-    <div id="chat-container" class="chat-container">
+<main id="main-content" class="chat-main">
+    <div id="chat-container" class="chat-container" role="log" aria-live="polite" aria-label="Chat messages">
         <div class="message assistant">
             <div class="message-content">
                 Welcome! Ask me analytical questions about hospital data in Thai or English.<br><br>
                 Examples:<br>
                 - How many OPD visits were there last year?<br>
                 - What percentage of patients have diabetes?<br>
-                - มีผู้ป่วยเบาหวานกี่คนในปีที่แล้ว?
+                - <span lang="th">มีผู้ป่วยเบาหวานกี่คนในปีที่แล้ว?</span>
             </div>
         </div>
     </div>
@@ -40,14 +40,14 @@
             required
         >
         <button type="submit" id="send-button" class="send-button">Send</button>
-        <button type="button" id="stop-button" class="stop-button" style="display: none;">Stop</button>
+        <button type="button" id="stop-button" class="stop-button" style="display: none;" aria-label="Cancel query">Stop</button>
     </form>
 </main>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    window.USER_ROLE = "{{ user.role }}";
+    window.USER_ROLE = {{ user.role|tojson }};
 </script>
 <script src="/static/js/chat.js?v=2"></script>
 {% endblock %}

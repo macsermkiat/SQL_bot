@@ -35,6 +35,7 @@ PRIORITY_TABLES: list[str] = [
     "LVST",       # Lab visit
     "LVSTEXM",    # Lab results
     "LABEXM",     # Lab exam master
+    "PTICD9CM",   # ICD-9-CM procedures (OPD+IPD, preferred over IPTSUMOPRT)
 ]
 
 

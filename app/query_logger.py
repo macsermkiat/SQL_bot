@@ -1,15 +1,21 @@
 """
-Fire-and-forget query attempt logging to Supabase REST API.
+Query attempt logging — local JSONL file (always) + Supabase REST (when reachable).
 
-Each call to create_log_task() schedules a background asyncio task that
-POSTs one row to the Supabase query_logs table. It never blocks the caller.
+Each call to create_log_task() schedules a background asyncio task that:
+1. Appends the log entry to a local JSONL file (never fails)
+2. POSTs the row to Supabase (fire-and-forget, silently fails if network blocked)
+
+Use `python -m app.query_logger sync` to push unsynced local logs to Supabase.
 """
 
 from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -21,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
 
+# Local log file path (next to app/)
+_LOG_DIR = Path(__file__).parent.parent / "logs"
+_LOG_FILE = _LOG_DIR / "query_logs.jsonl"
+_SYNCED_FILE = _LOG_DIR / "query_logs_synced.jsonl"
+
 
 def _get_client() -> httpx.AsyncClient:
     """Return module-level httpx client (created once)."""
@@ -29,8 +40,6 @@ def _get_client() -> httpx.AsyncClient:
         settings = get_settings()
         if not settings.supabase_url or not settings.supabase_service_key:
             raise RuntimeError("Supabase not configured")
-        # When tunneling via SSH reverse port forward (e.g. localhost:8443),
-        # TLS cert won't match — disable verification for the tunnel only
         is_tunnel = "localhost" in settings.supabase_url or "127.0.0.1" in settings.supabase_url
         _client = httpx.AsyncClient(
             base_url=settings.supabase_url,
@@ -78,7 +87,7 @@ class AttemptLog:
 
 
 def _serialise(log: AttemptLog) -> dict[str, Any]:
-    """Convert AttemptLog to the Supabase REST row dict."""
+    """Convert AttemptLog to a JSON-serializable dict."""
     return {
         "query_group_id": str(log.query_group_id),
         "attempt_number": log.attempt_number,
@@ -108,23 +117,42 @@ def _serialise(log: AttemptLog) -> dict[str, Any]:
     }
 
 
-async def log_attempt(log: AttemptLog) -> None:
-    """POST one attempt row to Supabase. Called as a background task."""
+def _write_local(payload: dict[str, Any]) -> None:
+    """Append one JSON line to local log file. Always succeeds."""
+    try:
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        row = {**payload, "created_at": datetime.now(timezone.utc).isoformat(), "synced": False}
+        with _LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        logger.warning("query_logger: failed to write local log", exc_info=True)
+
+
+async def _post_supabase(payload: dict[str, Any]) -> bool:
+    """POST one row to Supabase. Returns True on success."""
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_key:
-        return
+        return False
     try:
         client = _get_client()
-        payload = _serialise(log)
         response = await client.post("/rest/v1/query_logs", json=payload)
-        if response.status_code not in (200, 201):
-            logger.warning(
-                "query_logger: Supabase insert failed %d - %s",
-                response.status_code,
-                response.text[:200],
-            )
+        if response.status_code in (200, 201):
+            return True
+        logger.warning(
+            "query_logger: Supabase insert failed %d - %s",
+            response.status_code,
+            response.text[:200],
+        )
     except Exception:
-        logger.warning("query_logger: failed to log attempt", exc_info=True)
+        logger.debug("query_logger: Supabase unreachable (network blocked?)")
+    return False
+
+
+async def log_attempt(log: AttemptLog) -> None:
+    """Log one attempt: local file (always) + Supabase (best-effort)."""
+    payload = _serialise(log)
+    _write_local(payload)
+    await _post_supabase(payload)
 
 
 def create_log_task(log: AttemptLog) -> None:
@@ -135,4 +163,93 @@ def create_log_task(log: AttemptLog) -> None:
             name=f"query_log_{log.query_group_id}_{log.attempt_number}",
         )
     except RuntimeError:
-        logger.debug("query_logger: no running event loop, skipping log")
+        # No event loop (e.g. tests) — write local only
+        payload = _serialise(log)
+        _write_local(payload)
+
+
+# ---------------------------------------------------------------------------
+# CLI: python -m app.query_logger sync
+# Push unsynced local logs to Supabase from an unrestricted network
+# ---------------------------------------------------------------------------
+
+def sync_to_supabase() -> None:
+    """Read local JSONL, push unsynced rows to Supabase, mark as synced."""
+    import sys
+
+    settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_service_key:
+        print("Error: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env")
+        sys.exit(1)
+
+    if not _LOG_FILE.exists():
+        print(f"No local logs found at {_LOG_FILE}")
+        return
+
+    lines = _LOG_FILE.read_text(encoding="utf-8").strip().split("\n")
+    unsynced = []
+    already_synced = []
+
+    for line in lines:
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("synced"):
+            already_synced.append(row)
+        else:
+            unsynced.append(row)
+
+    if not unsynced:
+        print(f"All {len(already_synced)} rows already synced.")
+        return
+
+    print(f"Found {len(unsynced)} unsynced rows (of {len(lines)} total).")
+
+    is_tunnel = "localhost" in settings.supabase_url or "127.0.0.1" in settings.supabase_url
+    client = httpx.Client(
+        base_url=settings.supabase_url,
+        headers={
+            "apikey": settings.supabase_service_key,
+            "Authorization": f"Bearer {settings.supabase_service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        },
+        timeout=15.0,
+        verify=not is_tunnel,
+    )
+
+    success_count = 0
+    failed = []
+
+    for row in unsynced:
+        # Remove local-only fields before posting
+        payload = {k: v for k, v in row.items() if k not in ("synced", "created_at")}
+        try:
+            resp = client.post("/rest/v1/query_logs", json=payload)
+            if resp.status_code in (200, 201):
+                row["synced"] = True
+                success_count += 1
+            else:
+                print(f"  Failed ({resp.status_code}): {resp.text[:100]}")
+                failed.append(row)
+        except Exception as e:
+            print(f"  Error: {e}")
+            failed.append(row)
+
+    # Rewrite the file with updated sync status
+    all_rows = already_synced + [r for r in unsynced if r.get("synced")] + failed
+    with _LOG_FILE.open("w", encoding="utf-8") as f:
+        for row in all_rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    print(f"Synced {success_count}/{len(unsynced)} rows. {len(failed)} failed.")
+    client.close()
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "sync":
+        sync_to_supabase()
+    else:
+        print("Usage: python -m app.query_logger sync")
+        print("  Push unsynced local logs to Supabase")

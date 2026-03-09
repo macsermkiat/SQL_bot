@@ -29,6 +29,9 @@ def _get_client() -> httpx.AsyncClient:
         settings = get_settings()
         if not settings.supabase_url or not settings.supabase_service_key:
             raise RuntimeError("Supabase not configured")
+        # When tunneling via SSH reverse port forward (e.g. localhost:8443),
+        # TLS cert won't match — disable verification for the tunnel only
+        is_tunnel = "localhost" in settings.supabase_url or "127.0.0.1" in settings.supabase_url
         _client = httpx.AsyncClient(
             base_url=settings.supabase_url,
             headers={
@@ -37,7 +40,8 @@ def _get_client() -> httpx.AsyncClient:
                 "Content-Type": "application/json",
                 "Prefer": "return=minimal",
             },
-            timeout=10.0,
+            timeout=15.0,
+            verify=not is_tunnel,
         )
     return _client
 

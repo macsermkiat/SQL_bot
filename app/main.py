@@ -217,6 +217,7 @@ async def chat_stream(
         try:
             async for event in orchestrator.handle_message_streaming(
                 request, cancellable,
+                user_email=user.email, user_role=user.role,
             ):
                 event_type = event.get("event", "progress")
 

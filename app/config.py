@@ -26,7 +26,7 @@ class Settings(BaseSettings):
         description="Anthropic API key for Claude",
     )
     claude_model: str = Field(
-        default="claude-sonnet-4-5",
+        default="claude-sonnet-4-6",
         description="Claude model to use",
     )
 
@@ -75,6 +75,16 @@ class Settings(BaseSettings):
     super_users_file: str = Field(
         default="config/super_users.json",
         description="Path to JSON file with super user email list",
+    )
+
+    # Supabase logging (optional — logging disabled if unset)
+    supabase_url: str | None = Field(
+        default=None,
+        description="Supabase project URL for query logging",
+    )
+    supabase_service_key: str | None = Field(
+        default=None,
+        description="Supabase service_role key for server-side inserts",
     )
 
     # Paths

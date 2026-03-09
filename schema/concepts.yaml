@@ -103,6 +103,20 @@ liver_function:
   tables:
     - "LABEXM"
 
+lab_result_lookup:
+  description: "Lab result queries - use LVSTEXM directly, not LVST"
+  tables:
+    - "LVSTEXM"
+    - "LABEXM"
+  notes: >
+    CRITICAL: LVSTEXM has hn, lvstdate, labexm, result, an, labno - everything needed for lab queries.
+    Do NOT join LVST header table unless you specifically need LVST-only columns (e.g., dct, lrfrlct).
+    WRONG: LVST lv JOIN LVSTEXM lexm ON lv."labno" = lexm."labno" (unnecessary join, and labno relationship is ambiguous)
+    RIGHT: Query LVSTEXM directly with date filter on lvstdate.
+    To find lab test codes: SELECT labexm FROM LABEXM WHERE LOWER(labname) LIKE '%hba1c%' (dynamic, never hardcode).
+    Numeric results: result column is TEXT. Always validate before CAST:
+    CASE WHEN lexm."result" ~ '^[0-9]+(\.[0-9]+)?$' THEN CAST(lexm."result" AS NUMERIC) END
+
 medication_lookup:
   description: "Drug/medication lookup from MEDITEMDIS table"
   tables:
@@ -122,6 +136,10 @@ medication_lookup:
     WARNING: There is NO column called "name" in MEDITEMDIS. Use "medname" for drug name searches.
     WARNING: brandname is NUMERIC - do NOT use LIKE on it.
     Prescription chain: PRSC (prescription header, has hn/prscdate) -> PRSCDT (prescription detail, has meditem) -> MEDITEMDIS (drug master, has medname).
+    CRITICAL JOIN RULE: PRSC to PRSCDT must join on BOTH prscno AND sphmlct (pharmacy unit code).
+    WRONG: PRSC.prscno = PRSCDT.prscno AND PRSC.prvno = PRSCDT.prvno
+    RIGHT: PRSC.prscno = PRSCDT.prscno AND PRSC.sphmlct = PRSCDT.sphmlct
+    prvno is an authorization reference, NOT a join key. sphmlct distinguishes pharmacy units.
 
 icd_code_format:
   description: "ICD code storage format in this database"
@@ -195,3 +213,114 @@ vital_signs:
     dtx = blood sugar level (ระดับน้ำตาลในเลือด).
     hct = hematocrit (ความเข้มเม็ดเลือดแดง).
     prdate = date of measurement. vstdate = visit date.
+
+antihypertensive_drug_classes:
+  description: "Antihypertensive drug classification by pharmacological class"
+  tables:
+    - "MEDITEMDIS"
+    - "PRSCDT"
+    - "PRSC"
+  notes: >
+    When counting antihypertensive medications, count by DRUG CLASS (pharmacological group), NOT individual drug items.
+    Major antihypertensive drug classes:
+    1. ACE inhibitors (ACEi): enalapril, ramipril, lisinopril, captopril, perindopril
+    2. ARBs: losartan, valsartan, irbesartan, telmisartan, candesartan, olmesartan
+    3. Calcium Channel Blockers (CCB): amlodipine, nifedipine, felodipine, diltiazem, verapamil
+    4. Diuretics: hydrochlorothiazide, furosemide, spironolactone, chlorthalidone, indapamide
+    5. Beta-blockers: atenolol, metoprolol, propranolol, bisoprolol, carvedilol
+    6. Alpha-blockers: prazosin, doxazosin
+    7. Direct vasodilators: hydralazine, minoxidil
+    8. Central alpha-agonists: methyldopa, clonidine
+    To classify drugs, use MEDITEMDIS.chemname or MEDITEMDIS.tradename with LIKE matching per class.
+    Example: LOWER(m."chemname") LIKE '%amlodipine%' OR LOWER(m."tradename") LIKE '%amlodipine%' -> class 'CCB'.
+    Use a CASE expression to assign drug class, then COUNT(DISTINCT drug_class).
+
+concurrent_medication:
+  description: "How to count concurrent (simultaneous) medications vs any-time medications"
+  tables:
+    - "PRSC"
+    - "PRSCDT"
+  notes: >
+    CRITICAL: When a clinical question asks for patients on >= N drugs "at a time" or "simultaneously",
+    you must count drugs prescribed in the SAME VISIT (same vn or same prscno), NOT just any drugs
+    received at any point during the year.
+    WRONG approach: COUNT all distinct drugs across the entire year (a patient who switched from drug A
+    to drug B and then to drug C would count as 3 drugs, but was never on all 3 simultaneously).
+    RIGHT approach: For each prescription (prscno) or visit (vn), count the distinct drug classes.
+    Then check if ANY single prescription/visit has >= N classes.
+    Pattern for concurrent drugs:
+    ```sql
+    SELECT p."hn", p."prscno", COUNT(DISTINCT drug_class) AS class_count
+    FROM "KCMH_HIS"."PRSC" p
+    INNER JOIN "KCMH_HIS"."PRSCDT" pd ON p."prscno"=pd."prscno" AND p."sphmlct"=pd."sphmlct"
+    ...
+    GROUP BY p."hn", p."prscno"
+    HAVING COUNT(DISTINCT drug_class) >= 3
+    ```
+    This ensures the patient was prescribed >= 3 classes in a single prescription event.
+
+resistant_hypertension:
+  description: "Resistant hypertension - uncontrolled BP despite >= 3 antihypertensive drug classes"
+  condition: "icd10 LIKE 'I10%'"
+  icd10_codes:
+    - "I10"
+  tables:
+    - "PTDIAG"
+    - "PRSC"
+    - "PRSCDT"
+    - "MEDITEMDIS"
+    - "OVSTPRESS"
+  notes: >
+    Resistant hypertension definition: BP remains >= 140/90 mmHg despite concurrent use of >= 3
+    different antihypertensive drug CLASSES (not individual drugs).
+    CRITICAL requirements:
+    1. Count drug CLASSES (ACEi, ARB, CCB, diuretic, beta-blocker, etc.), not individual drug items.
+       Use CASE on chemname/tradename to classify, then COUNT(DISTINCT class).
+    2. The >= 3 classes must be CONCURRENT (same prescription/visit), not cumulative over the year.
+       A patient who tried drug A, then switched to B, then C is NOT resistant - they were never on all 3 at once.
+    3. BP measurement (OVSTPRESS.hbpn >= 140) should be AFTER or DURING treatment period.
+       Join OVSTPRESS to the prescription via date: BP measurement date >= prescription date.
+       This ensures we measure BP while the patient is actually on the medications.
+    4. Use PRSC-PRSCDT join with BOTH prscno AND sphmlct (never prvno).
+
+temporal_drug_condition:
+  description: "Temporal relationship between drug prescriptions and clinical events"
+  tables:
+    - "PRSC"
+    - "PRSCDT"
+    - "IPT"
+    - "OVST"
+  notes: >
+    CRITICAL: When a question implies a temporal relationship between medications and events,
+    you MUST enforce the correct time ordering with date filters.
+    Common patterns:
+    1. "already on drug X" / "ได้รับยา X อยู่แล้ว" = prescription date BEFORE the event.
+       Filter: p."prscdate" < (first event date for that patient).
+       Example: inhaler prescribed BEFORE first COPD admission.
+    2. "despite treatment" / "แม้ได้รับการรักษา" = measurement AFTER/DURING treatment.
+       Filter: measurement date >= prescription date.
+    3. "after starting drug X" = event date > first prescription date of drug X.
+    Pattern for "already on drug before event":
+    ```sql
+    WHERE p."prscdate" < (SELECT MIN(i."rgtdate") FROM ... WHERE i."hn" = p."hn")
+    ```
+    Do NOT omit date filters when temporal language is present in the question.
+    A query with no date constraint on the drug check answers "ever received" not "already on".
+
+copd_exacerbation:
+  description: "COPD with acute exacerbation identification"
+  condition: "icd10 LIKE 'J44%'"
+  icd10_codes:
+    - "J44"
+    - "J44.0"
+    - "J44.1"
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+    - "IPT"
+  notes: >
+    COPD = ICD-10 J44 (all subcodes). Use LIKE 'J44%', do NOT hardcode individual subcodes.
+    J44.0 = COPD with acute lower respiratory infection.
+    J44.1 = COPD with acute exacerbation (most specific for "acute exacerbation").
+    For "acute exacerbation admissions", use IPT + IPTSUMDIAG with J44.1 (or J44.0/J44.1 if broader).
+    For general COPD, use J44%.

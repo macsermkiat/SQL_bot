@@ -44770,9 +44770,20 @@
       "from_column": "prscno",
       "to_table": "PRSC",
       "to_column": "prscno",
-      "confidence": "heuristic",
-      "rel_type": "heuristic_home",
-      "source": "heuristic",
+      "confidence": "high",
+      "rel_type": "composite_pk",
+      "source": "relationships.md",
+      "warning_from": "",
+      "warning_to": ""
+    },
+    {
+      "from_table": "PRSCDT",
+      "from_column": "sphmlct",
+      "to_table": "PRSC",
+      "to_column": "sphmlct",
+      "confidence": "high",
+      "rel_type": "composite_pk",
+      "source": "relationships.md",
       "warning_from": "",
       "warning_to": ""
     },
@@ -44781,10 +44792,10 @@
       "from_column": "prvno",
       "to_table": "PRSC",
       "to_column": "prvno",
-      "confidence": "medium",
+      "confidence": "low",
       "rel_type": "PRSC",
       "source": "relationships.md",
-      "warning_from": "",
+      "warning_from": "join_warning: prvno is NOT for joining PRSC-PRSCDT. Use prscno+sphmlct instead",
       "warning_to": ""
     },
     {
@@ -45769,8 +45780,8 @@
             "vn"
           ],
           "has_keys": [],
-          "join_column": "prvno",
-          "header_join_column": "prvno"
+          "join_column": "prscno",
+          "header_join_column": "prscno"
         },
         {
           "table_name": "PRSCDTEXT",
@@ -46043,7 +46054,7 @@
   "stats": {
     "total_tables": 123,
     "total_columns": 2183,
-    "total_join_edges": 398,
+    "total_join_edges": 399,
     "total_families": 65,
     "total_family_headers": 10,
     "total_detail_tables": 17

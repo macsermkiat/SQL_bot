@@ -116,7 +116,10 @@ class LLMClient:
 Schema marks: n=numeric, t=text, d=date, b=bool. Match literals to types:
 - Numeric cols: WHERE x IN (1,2) not ('A','B'). LIKE only on text cols.
 - Drug search: MEDITEMDIS."tradename" LIKE '%%keyword%%'. "brandname" is numeric, never LIKE. Join: PRSCDT.meditem=MEDITEMDIS.meditem.
-- NEVER fabricate codes. Always query reference tables dynamically.
+- PRSC-PRSCDT join: ALWAYS use prscno AND sphmlct. NEVER use prvno. Example: PRSC p JOIN PRSCDT pd ON p."prscno"=pd."prscno" AND p."sphmlct"=pd."sphmlct"
+- Drug class counting: When question asks >=N drug types/classes, count pharmacological CLASSES (ACEi, ARB, CCB, diuretic, beta-blocker), NOT individual drug items. Use CASE on chemname/tradename to classify, then COUNT(DISTINCT class). Must be concurrent (same prescription), not cumulative over time.
+- NEVER fabricate or hardcode meditem/ICD codes in VALUES clauses. Always query reference tables dynamically (e.g., SELECT meditem FROM MEDITEMDIS WHERE LOWER(tradename) LIKE '%keyword%'). Use LIKE 'J44%' for ICD ranges, not enumerated VALUES lists.
+- Temporal drug-condition: "already on drug" = prscdate BEFORE event. "despite treatment" = measurement AFTER prscdate. Always enforce date ordering when question implies temporal relationship.
 - ICD-9-CM codes (icd9cm columns) are stored WITHOUT dots. '47.01' is stored as '4701', '47.09' as '4709'. Use LIKE '470%' NOT '47.0%'. Applies to: IPTSUMOPRT, PTICD9CM, PTOPRT, ICD9CM, OPRTACT.
 - Use IS NULL not =NULL. LOWER() for case-insensitive text. Status codes are often numeric.
 
@@ -136,6 +139,7 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 - Blood pressure/vitals -> OVSTPRESS
 - ICU bookings -> IPTBOOKBEDICU
 - Radiology/imaging -> RDOEXM
+- Lab results -> LVSTEXM directly (has hn, lvstdate, labexm, result). Do NOT join LVST unless you need LVST-only columns. LVSTEXM is self-sufficient for most lab queries.
 - Detail tables may lack hn/vn/an. Check "Header-Detail Join Rules" in schema context for required JOINs.
 
 ## PERFORMANCE
@@ -161,9 +165,10 @@ Drug lookup (never hardcode codes):
 ```sql
 WITH drugs AS (SELECT DISTINCT "meditem" FROM "KCMH_HIS"."MEDITEMDIS" WHERE LOWER("tradename") LIKE '%drug_name%')
 SELECT COUNT(DISTINCT p."hn") FROM "KCMH_HIS"."PRSC" p
-INNER JOIN "KCMH_HIS"."PRSCDT" pd ON p."prscno"=pd."prscno"
+INNER JOIN "KCMH_HIS"."PRSCDT" pd ON p."prscno"=pd."prscno" AND p."sphmlct"=pd."sphmlct"
 INNER JOIN drugs d ON pd."meditem"=d."meditem" WHERE p."prscdate">='{last_year}-01-01'
 ```
+PRSC-PRSCDT join: ALWAYS use both prscno AND sphmlct (pharmacy unit). Never use prvno for joining.
 
 {schema_context}
 

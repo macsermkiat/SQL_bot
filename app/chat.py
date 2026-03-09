@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ from app.query_complexity import analyze_query_complexity, format_complexity_war
 from app.session import get_session_manager
 from app.sql_gen import get_sql_generator
 from app.sql_guard import SQLGuardError, validate_sql
+from app.query_logger import AttemptLog, create_log_task
 from app.validators import run_sanity_checks
 
 logger = logging.getLogger(__name__)
@@ -858,6 +860,8 @@ class ChatOrchestrator:
         self,
         request: ChatRequest,
         cancellable: CancellableQuery,
+        user_email: str | None = None,
+        user_role: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Handle a message with streaming progress events."""
         session_manager = get_session_manager()
@@ -869,6 +873,8 @@ class ChatOrchestrator:
                 question=request.message,
                 session_id=session.session_id,
                 cancellable=cancellable,
+                user_email=user_email,
+                user_role=user_role,
             ):
                 if event.get("event") == "complete" and "data" in event:
                     data = event["data"]
@@ -919,6 +925,8 @@ class ChatOrchestrator:
         question: str,
         session_id: str,
         cancellable: CancellableQuery,
+        user_email: str | None = None,
+        user_role: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Process a question with up to 5 auto-fix retries and streaming progress.
 
@@ -928,6 +936,7 @@ class ChatOrchestrator:
         """
         MAX_RETRIES = 5
         total_attempts = MAX_RETRIES + 1
+        query_group_id = uuid.uuid4()
 
         session_manager = get_session_manager()
         generator = get_sql_generator()
@@ -957,6 +966,35 @@ class ChatOrchestrator:
             total_usage.input_tokens += usage.input_tokens
             total_usage.output_tokens += usage.output_tokens
             total_usage.total_tokens += usage.total_tokens
+
+        def _log(attempt: int, stage: str, **kwargs: Any) -> None:
+            """Fire-and-forget log of one attempt."""
+            create_log_task(AttemptLog(
+                query_group_id=query_group_id,
+                attempt_number=attempt,
+                session_id=session_id,
+                question=question,
+                attempt_stage=stage,
+                user_email=user_email,
+                user_role=user_role,
+                generated_sql=kwargs.get("generated_sql"),
+                assumptions=kwargs.get("assumptions"),
+                concepts_used=kwargs.get("concepts_used"),
+                confidence=kwargs.get("confidence"),
+                guard_valid=kwargs.get("guard_valid"),
+                guard_error=kwargs.get("guard_error"),
+                explain_valid=kwargs.get("explain_valid"),
+                explain_error=kwargs.get("explain_error"),
+                execution_time_ms=kwargs.get("execution_time_ms"),
+                row_count=kwargs.get("row_count"),
+                result_truncated=kwargs.get("result_truncated"),
+                error_message=kwargs.get("error_message"),
+                answer=kwargs.get("answer"),
+                sanity_checks=kwargs.get("sanity_checks"),
+                input_tokens=total_usage.input_tokens,
+                output_tokens=total_usage.output_tokens,
+                total_tokens=total_usage.total_tokens,
+            ))
 
         accumulated_errors: list[dict[str, str]] = []
         sql: str | None = None
@@ -1010,6 +1048,7 @@ class ChatOrchestrator:
                         "error": "Auto-fix failed to generate corrected SQL",
                         "stage": "generation",
                     })
+                    _log(attempt, "generation", error_message="Auto-fix failed to generate corrected SQL")
                     continue
             else:
                 gen, gen_usage = await asyncio.to_thread(generator.generate, question, history)
@@ -1017,6 +1056,9 @@ class ChatOrchestrator:
 
             # Clarification / no SQL - not retryable
             if gen.needs_clarification:
+                _log(attempt, "clarification",
+                     assumptions=gen.assumptions, confidence=gen.confidence,
+                     error_message=gen.clarification_question)
                 yield _fail(
                     gen.clarification_question or "Could you please clarify?",
                     needs_clarification=True,
@@ -1028,6 +1070,7 @@ class ChatOrchestrator:
 
             sql = gen.sql
             if not sql:
+                _log(attempt, "generation", error_message="No SQL generated")
                 yield _fail(
                     "I couldn't generate a SQL query. Could you rephrase?",
                     error="No SQL generated", confidence="low",
@@ -1049,6 +1092,12 @@ class ChatOrchestrator:
                     "error": val.error or "Unknown validation error",
                     "stage": "validation",
                 })
+                _log(attempt, "validation",
+                     generated_sql=sql, guard_valid=False,
+                     guard_error=val.error,
+                     assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+                     confidence=gen.confidence,
+                     error_message=val.error)
                 continue
 
             # --- Step 3: EXPLAIN validation (dry-run) ---
@@ -1064,6 +1113,12 @@ class ChatOrchestrator:
                     "error": explain_err or "Runtime validation failed",
                     "stage": "explain",
                 })
+                _log(attempt, "explain",
+                     generated_sql=sql, guard_valid=True,
+                     explain_valid=False, explain_error=explain_err,
+                     assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+                     confidence=gen.confidence,
+                     error_message=explain_err)
                 continue
 
             # --- Step 4: Complexity analysis ---
@@ -1165,10 +1220,20 @@ class ChatOrchestrator:
                         "error": f"Query execution failed: {error_str}",
                         "stage": "execution",
                     })
+                    _log(attempt, "execution",
+                         generated_sql=sql, guard_valid=True, explain_valid=True,
+                         assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+                         confidence=gen.confidence,
+                         error_message=f"Query execution failed: {error_str}")
                     continue
 
                 # Non-retryable error
                 if result is None:
+                    _log(attempt, "terminal_error",
+                         generated_sql=sql, guard_valid=True, explain_valid=True,
+                         assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+                         confidence=gen.confidence,
+                         error_message=error_str)
                     yield _fail(
                         f"I couldn't execute the query. Error: {exec_err}",
                         sql=sql, error=error_str,
@@ -1184,15 +1249,23 @@ class ChatOrchestrator:
                 and not zero_result_retried
             ):
                 zero_result_retried = True
+                zero_err = (
+                    "Query returned 0 rows. The query executed successfully "
+                    "but found no matching data. Try different tables, "
+                    "columns, or filter conditions."
+                )
                 accumulated_errors.append({
                     "sql": sql,
-                    "error": (
-                        "Query returned 0 rows. The query executed successfully "
-                        "but found no matching data. Try different tables, "
-                        "columns, or filter conditions."
-                    ),
+                    "error": zero_err,
                     "stage": "zero_results",
                 })
+                _log(attempt, "zero_results",
+                     generated_sql=sql, guard_valid=True, explain_valid=True,
+                     execution_time_ms=result.execution_time_ms,
+                     row_count=0, result_truncated=False,
+                     assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+                     confidence=gen.confidence,
+                     error_message=zero_err)
                 logger.info("Zero-result retry: query returned 0 rows, retrying with extended thinking")
                 continue
 
@@ -1202,6 +1275,11 @@ class ChatOrchestrator:
             last_err = accumulated_errors[-1] if accumulated_errors else {
                 "error": "Unknown error", "sql": "",
             }
+            _log(attempt, "exhausted",
+                 generated_sql=last_err.get("sql"),
+                 assumptions=gen.assumptions if gen else None,
+                 concepts_used=gen.concepts_used if gen else None,
+                 error_message=last_err.get("error"))
             yield _fail(
                 f"I couldn't process the query after {total_attempts} attempts. "
                 f"Last error: {last_err.get('error', 'Unknown')}",
@@ -1235,6 +1313,14 @@ class ChatOrchestrator:
             confidence=gen.confidence, sanity_checks=sanity_results,
             query_result=result, token_usage=total_usage,
         )
+        _log(attempt, "success",
+             generated_sql=sql, guard_valid=True, explain_valid=True,
+             execution_time_ms=result.execution_time_ms if result else None,
+             row_count=result.row_count if result else None,
+             result_truncated=result.truncated if result else None,
+             assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+             confidence=gen.confidence, answer=answer,
+             sanity_checks=[c.model_dump() for c in sanity_results])
         yield _complete(response)
 
 

@@ -1,7 +1,7 @@
 """
 Notion logger -- push completed query logs to a Notion database (fire-and-forget).
 
-Each successful query attempt (attempt_stage == "answer") creates one row
+Each successful query attempt (attempt_stage == "success") creates one row
 in the configured Notion database, mirroring the fields stored in Supabase.
 """
 

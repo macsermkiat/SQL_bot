@@ -155,7 +155,7 @@ async def log_attempt(log: AttemptLog) -> None:
     _write_local(payload)
     await _post_supabase(payload)
     # Push completed queries to Notion for review
-    if log.attempt_stage == "answer":
+    if log.attempt_stage == "success":
         await post_to_notion(payload)
 
 

@@ -22,6 +22,7 @@ from uuid import UUID
 import httpx
 
 from app.config import get_settings
+from app.notion_logger import post_to_notion
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +150,13 @@ async def _post_supabase(payload: dict[str, Any]) -> bool:
 
 
 async def log_attempt(log: AttemptLog) -> None:
-    """Log one attempt: local file (always) + Supabase (best-effort)."""
+    """Log one attempt: local file (always) + Supabase (best-effort) + Notion (on answer)."""
     payload = _serialise(log)
     _write_local(payload)
     await _post_supabase(payload)
+    # Push completed queries to Notion for review
+    if log.attempt_stage == "answer":
+        await post_to_notion(payload)
 
 
 def create_log_task(log: AttemptLog) -> None:

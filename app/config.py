@@ -87,6 +87,16 @@ class Settings(BaseSettings):
         description="Supabase service_role key for server-side inserts",
     )
 
+    # Notion logging (optional — logging disabled if unset)
+    notion_api_key: str | None = Field(
+        default=None,
+        description="Notion Internal Integration Token for pushing query logs",
+    )
+    notion_database_id: str | None = Field(
+        default=None,
+        description="Notion database ID to push query logs to",
+    )
+
     # Paths
     base_dir: Path = Field(
         default_factory=lambda: Path(__file__).parent.parent,

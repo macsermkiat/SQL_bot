@@ -87,7 +87,9 @@ class LLMClient:
     def _build_system_prompt(self, schema_context: str, concepts_context: str) -> str:
         """Build the system prompt with schema and concept context.
 
-        Compact format to minimize token usage (~5K static + schema + concepts).
+        Lean prompt: only universal rules that apply to every query.
+        Domain knowledge (drugs, procedures, vitals, routing) lives in
+        concepts.yaml and is injected via {concepts_context}.
         """
         from datetime import datetime
         import zoneinfo
@@ -115,34 +117,14 @@ class LLMClient:
 ## DATA TYPES
 Schema marks: n=numeric, t=text, d=date, b=bool. Match literals to types:
 - Numeric cols: WHERE x IN (1,2) not ('A','B'). LIKE only on text cols.
-- Drug search: MEDITEMDIS."tradename" LIKE '%%keyword%%'. "brandname" is numeric, never LIKE. Join: PRSCDT.meditem=MEDITEMDIS.meditem.
-- PRSC-PRSCDT join: ALWAYS use prscno AND sphmlct. NEVER use prvno. Example: PRSC p JOIN PRSCDT pd ON p."prscno"=pd."prscno" AND p."sphmlct"=pd."sphmlct"
-- Drug class counting: When question asks >=N drug types/classes, count pharmacological CLASSES (ACEi, ARB, CCB, diuretic, beta-blocker), NOT individual drug items. Use CASE on chemname/tradename to classify, then COUNT(DISTINCT class). Must be concurrent (same prescription), not cumulative over time.
-- NEVER fabricate or hardcode meditem/ICD codes in VALUES clauses. Always query reference tables dynamically (e.g., SELECT meditem FROM MEDITEMDIS WHERE LOWER(tradename) LIKE '%keyword%'). Use LIKE 'J44%' for ICD ranges, not enumerated VALUES lists.
-- Temporal drug-condition: "already on drug" = prscdate BEFORE event. "despite treatment" = measurement AFTER prscdate. Always enforce date ordering when question implies temporal relationship.
-- ICD-9-CM codes (icd9cm columns) are stored WITHOUT dots. '47.01' is stored as '4701', '47.09' as '4709'. Use LIKE '470%' NOT '47.0%'. Applies to: IPTSUMOPRT, PTICD9CM, PTOPRT, ICD9CM, OPRTACT.
 - Use IS NULL not =NULL. LOWER() for case-insensitive text. Status codes are often numeric.
+- NEVER fabricate or hardcode meditem/ICD codes in VALUES clauses. Always query reference tables dynamically.
 
 ## TABLE SCHEMA
 Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns for selected tables).
 - Prefer [DETAILED] tables. Non-detailed can use universal keys (hn/vn/an).
 - Do NOT invent tables. Heed ! warnings for common column mistakes.
 - Aliases: never use "lvst" for LVSTEXM, "pt" for PTDIAG, "dct" for DCTSPEC.
-
-## TABLE ROUTING (use the RIGHT table)
-- Emergency/ER visits -> CNER (NOT OVST.emrgncy which is just urgency triage level)
-- Emergency vs elective surgery -> OPREQVST.optype (1=Elective, 2=Emergency). IPT.receiveflag is NOT populated.
-- Surgery/procedure dates -> IPTSUMOPRT.indate or PTOPRT.oprtdatein (actual procedure times)
-- ICD-9-CM procedure codes -> IPTSUMOPRT.icd9cm (primary), PTICD9CM.icd9cm (supplementary). PTOPRT.icd9cm is mostly empty.
-- Procedure names -> JOIN ICD9CM on icd9cm to get name/thainame. IPTSUMOPRT has codes but often no names.
-- Procedure by charge code -> INCPT.ordercode = MASTERORDER.ordercode, then filter MASTERORDER.name/name_en with LIKE.
-- Comprehensive procedure counts -> UNION IPTSUMOPRT (ICD-9-CM) with INCPT+MASTERORDER (charge-based) for full coverage.
-- OR scheduling/surgery details -> OPREQVST (has an, optype, estmdate)
-- Delivery/birth -> DLVST, DLVSTDESC, DLVSTEXT
-- Blood pressure/vitals -> OVSTPRESS
-- ICU bookings -> IPTBOOKBEDICU
-- Radiology/imaging -> RDOEXM
-- Lab results -> LVSTEXM directly (has hn, lvstdate, labexm, result). Do NOT join LVST unless you need LVST-only columns. LVSTEXM is self-sufficient for most lab queries.
 - Detail tables may lack hn/vn/an. Check "Header-Detail Join Rules" in schema context for required JOINs.
 
 ## PERFORMANCE
@@ -151,31 +133,9 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 - Cross-year: single scan + EXTRACT(YEAR FROM date), never scan same table twice.
 - Numeric text (lab results): CASE WHEN col ~ '^[0-9]+(\\.[0-9]+)?$' THEN CAST(col AS NUMERIC) END
 
-## KEY PATTERNS
-ICD lookup (OPD - PTDIAG has hn):
-```sql
-WITH codes AS (SELECT "icd10" FROM "KCMH_HIS"."ICD10" WHERE "icd10" LIKE 'E11%')
-SELECT COUNT(DISTINCT d."hn") FROM "KCMH_HIS"."PTDIAG" d
-INNER JOIN codes c ON d."icd10"=c."icd10" WHERE d."vstdate">='{last_year}-01-01'
-```
-ICD lookup (IPD - IPTSUMDIAG has NO hn, must JOIN IPT):
-```sql
-SELECT COUNT(DISTINCT ipt."hn") FROM "KCMH_HIS"."IPTSUMDIAG" d
-INNER JOIN "KCMH_HIS"."IPT" ipt ON d."an"=ipt."an"
-WHERE d."icd10" LIKE 'E11%' AND ipt."dchdate">='{last_year}-01-01'
-```
-Drug lookup (never hardcode codes):
-```sql
-WITH drugs AS (SELECT DISTINCT "meditem" FROM "KCMH_HIS"."MEDITEMDIS" WHERE LOWER("tradename") LIKE '%drug_name%')
-SELECT COUNT(DISTINCT p."hn") FROM "KCMH_HIS"."PRSC" p
-INNER JOIN "KCMH_HIS"."PRSCDT" pd ON p."prscno"=pd."prscno" AND p."sphmlct"=pd."sphmlct"
-INNER JOIN drugs d ON pd."meditem"=d."meditem" WHERE p."prscdate">='{last_year}-01-01'
-```
-PRSC-PRSCDT join: ALWAYS use both prscno AND sphmlct (pharmacy unit). Never use prvno for joining.
-
 {schema_context}
 
-## CONCEPTS
+## CONCEPTS (domain knowledge - ALWAYS check before writing SQL)
 {concepts_context}
 
 ## KEYS

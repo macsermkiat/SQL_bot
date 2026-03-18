@@ -161,7 +161,8 @@ surgery_inpatient:
     - "OPREQVST"
   notes: >
     CRITICAL TABLE SELECTION for procedure queries:
-    - IPTSUMOPRT: PRIMARY source for inpatient procedure ICD-9-CM codes. Medical records summary. Join IPT via an. Has indate/outdate.
+    - IPTSUMOPRT: PRIMARY source for inpatient procedure ICD-9-CM codes. Medical records summary. Join IPT via an.
+      Columns: an, icd9cm, oprtcnt, oprtside, orflag. NO date columns - use IPT.dchdate or IPT.rgtdate for dates.
       IMPORTANT: IPTSUMOPRT has icd9cm codes but often WITHOUT procedure names.
       Always JOIN ICD9CM table to get the procedure name:
       IPTSUMOPRT.icd9cm = ICD9CM.icd9cm -> ICD9CM.name (English), ICD9CM.thainame (Thai).
@@ -355,3 +356,90 @@ copd_exacerbation:
     J44.1 = COPD with acute exacerbation (most specific for "acute exacerbation").
     For "acute exacerbation admissions", use IPT + IPTSUMDIAG with J44.1 (or J44.0/J44.1 if broader).
     For general COPD, use J44%.
+
+# =====================================================
+# TABLE ROUTING (moved from system prompt to reduce bloat)
+# =====================================================
+
+emergency_visit:
+  description: "Emergency/ER visit routing"
+  tables:
+    - "CNER"
+    - "OVST"
+  notes: >
+    CRITICAL: Emergency/ER visits -> use CNER table (NOT OVST.emrgncy).
+    OVST.emrgncy is just an urgency triage level field, NOT an ER indicator.
+    CNER contains actual ER visit records with triage, chief complaint, disposition.
+
+delivery_birth:
+  description: "Delivery and birth records"
+  tables:
+    - "DLVST"
+    - "DLVSTDESC"
+    - "DLVSTEXT"
+  notes: >
+    Delivery/birth queries use these tables:
+    - DLVST: Main delivery visit record
+    - DLVSTDESC: Delivery description/details
+    - DLVSTEXT: Extended delivery information
+
+icu_booking:
+  description: "ICU bed bookings and admissions"
+  tables:
+    - "IPTBOOKBEDICU"
+  notes: >
+    ICU bookings -> IPTBOOKBEDICU table.
+    Contains ICU bed reservation and admission records for inpatients.
+
+radiology_imaging:
+  description: "Radiology and imaging examination records"
+  tables:
+    - "RDOEXM"
+  notes: >
+    Radiology/imaging queries -> RDOEXM table.
+    Contains radiology examination orders and results.
+
+# =====================================================
+# KEY SQL PATTERNS (moved from system prompt to reduce bloat)
+# =====================================================
+
+icd_lookup_pattern:
+  description: "Standard ICD lookup patterns for OPD and IPD"
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+    - "IPT"
+    - "ICD10"
+  notes: >
+    OPD ICD lookup (PTDIAG has hn directly):
+    ```sql
+    WITH codes AS (SELECT "icd10" FROM "KCMH_HIS"."ICD10" WHERE "icd10" LIKE 'E11%')
+    SELECT COUNT(DISTINCT d."hn") FROM "KCMH_HIS"."PTDIAG" d
+    INNER JOIN codes c ON d."icd10"=c."icd10" WHERE d."vstdate">='2025-01-01'
+    ```
+    IPD ICD lookup (IPTSUMDIAG has NO hn, must JOIN IPT):
+    ```sql
+    SELECT COUNT(DISTINCT ipt."hn") FROM "KCMH_HIS"."IPTSUMDIAG" d
+    INNER JOIN "KCMH_HIS"."IPT" ipt ON d."an"=ipt."an"
+    WHERE d."icd10" LIKE 'E11%' AND ipt."dchdate">='2025-01-01'
+    ```
+    CRITICAL: IPTSUMDIAG does NOT have hn column. Always JOIN IPT via an to get hn.
+
+drug_lookup_pattern:
+  description: "Standard drug/prescription lookup pattern"
+  tables:
+    - "PRSC"
+    - "PRSCDT"
+    - "MEDITEMDIS"
+  notes: >
+    Drug lookup (never hardcode meditem codes):
+    ```sql
+    WITH drugs AS (SELECT DISTINCT "meditem" FROM "KCMH_HIS"."MEDITEMDIS" WHERE LOWER("tradename") LIKE '%drug_name%')
+    SELECT COUNT(DISTINCT p."hn") FROM "KCMH_HIS"."PRSC" p
+    INNER JOIN "KCMH_HIS"."PRSCDT" pd ON p."prscno"=pd."prscno" AND p."sphmlct"=pd."sphmlct"
+    INNER JOIN drugs d ON pd."meditem"=d."meditem" WHERE p."prscdate">='2025-01-01'
+    ```
+    CRITICAL JOIN RULE: PRSC to PRSCDT must join on BOTH prscno AND sphmlct (pharmacy unit code).
+    WRONG: PRSC.prscno = PRSCDT.prscno AND PRSC.prvno = PRSCDT.prvno
+    RIGHT: PRSC.prscno = PRSCDT.prscno AND PRSC.sphmlct = PRSCDT.sphmlct
+    prvno is an authorization reference, NOT a join key.

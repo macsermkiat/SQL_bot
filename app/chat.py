@@ -47,6 +47,7 @@ from app.session import get_session_manager
 from app.sql_gen import get_sql_generator
 from app.sql_guard import SQLGuardError, validate_sql
 from app.query_logger import AttemptLog, create_log_task
+from app.learning_store import get_learning_store
 from app.validators import run_sanity_checks
 
 logger = logging.getLogger(__name__)
@@ -621,6 +622,14 @@ class ChatOrchestrator:
                 "7. Reduce the number of CTEs - merge CTEs that scan the same table"
             )
 
+        # Inject learned patterns from past mistakes (only during retries)
+        learned_section = ""
+        try:
+            store = get_learning_store()
+            learned_section = store.build_prompt_section(question, sql=failed_sql)
+        except Exception:
+            pass  # non-critical
+
         error_context = history + [
             {
                 "role": "assistant",
@@ -634,6 +643,7 @@ class ChatOrchestrator:
                 "role": "user",
                 "content": (
                     f"Please fix the SQL. {fix_guidance}\n\n"
+                    f"{learned_section}"
                     f"Original question: {question}"
                 ),
             },
@@ -772,11 +782,21 @@ class ChatOrchestrator:
         columns_info = self._build_verified_columns_info(accumulated_errors)
         fix_guidance = self._build_fix_guidance(accumulated_errors)
 
+        # Inject learned patterns from past mistakes (only during retries)
+        learned_section = ""
+        try:
+            store = get_learning_store()
+            last_sql = accumulated_errors[-1].get("sql", "") if accumulated_errors else ""
+            learned_section = store.build_prompt_section(question, sql=last_sql)
+        except Exception:
+            pass  # non-critical
+
         error_history.append({
             "role": "user",
             "content": (
                 f"Fix the SQL for this question: {question}\n\n"
                 f"{fix_guidance}\n\n"
+                f"{learned_section}"
                 f"## VERIFIED COLUMNS (CRITICAL - USE ONLY THESE)\n"
                 f"{columns_info}\n\n"
                 f"DO NOT invent column names. If a column is not listed above, "
@@ -1290,6 +1310,22 @@ class ChatOrchestrator:
                 confidence="low",
             )
             return
+
+        # --- Post-loop: capture learning from retries ---
+        if accumulated_errors and sql and result is not None:
+            try:
+                store = get_learning_store()
+                # Record each error that was overcome
+                for err in accumulated_errors:
+                    store.record_pattern(
+                        question=question,
+                        error_stage=err.get("stage", "unknown"),
+                        error_summary=err.get("error", "")[:300],
+                        failed_sql=err.get("sql", ""),
+                        fixed_sql=sql,
+                    )
+            except Exception as learn_err:
+                logger.debug("Learning capture failed (non-critical): %s", learn_err)
 
         # --- Post-loop: sanity checks, format answer ---
         yield _progress("sanity_check", "Validating results...", 80)

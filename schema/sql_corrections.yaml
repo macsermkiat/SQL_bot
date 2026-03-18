@@ -1,0 +1,21 @@
+# SQL Corrections - Learned patterns from past query failures
+# These are proven fixes discovered through production usage.
+# The learning_store.py captures raw patterns; proven ones graduate here.
+#
+# Format:
+#   <pattern_id>:
+#     tables: [affected tables]
+#     wrong: "what the LLM tends to generate incorrectly"
+#     right: "the correct approach"
+#     reason: "why it's wrong"
+#
+# To add: run `python -m app.learning_store graduate` to promote
+# high-confidence patterns from out/learned_patterns.jsonl into this file.
+
+# --- Example entries (remove/replace with real patterns as they accumulate) ---
+
+# example_vstdate_ptdiag:
+#   tables: ["PTDIAG"]
+#   wrong: 'WHERE "vstdate" >= ...'
+#   right: 'WHERE "diagdate" >= ...'
+#   reason: "PTDIAG has no vstdate column. The date column is diagdate."

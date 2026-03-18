@@ -154,15 +154,20 @@ surgery_inpatient:
   description: "Inpatient surgery/procedure lookup and emergency surgery identification"
   tables:
     - "IPTSUMOPRT"
+    - "INCPT"
     - "PTOPRT"
     - "OPREQVST"
   notes: >
-    For the procedure that include OPD, or if not sure if it's OPD or IPD, use PTICD9CM.icd9cm, can link with hn and an. Very useful and important table.
-    For inpatient procedures, three table options:
-    - IPTSUMOPRT: RELIABLE source for icd9cm procedure codes. Medical records summary. Join IPT via an. Has indate/outdate.
+    CRITICAL TABLE SELECTION for procedure queries:
+    - IPTSUMOPRT: PRIMARY source for inpatient procedure ICD-9-CM codes. Medical records summary. Join IPT via an. Has indate/outdate.
+      PTICD9CM is NOT the primary procedure table - use IPTSUMOPRT instead.
+    - INCPT: Charge/expense table. Use charge codes (รหัสค่าใช้จ่าย) to identify procedures for comprehensive coverage.
+      Procedures that may not appear in IPTSUMOPRT can be found via INCPT charge codes.
+      For complete procedure counts, consider combining IPTSUMOPRT (ICD-9-CM based) with INCPT (charge-based).
     - PTOPRT: transactional procedure records with oprtact code and actual times (oprtdatein/oprtdateout). Join IPT via an. WARNING: PTOPRT.icd9cm is mostly EMPTY - do NOT rely on it for ICD-9-CM lookups.
     - OPREQVST: OR scheduling with optype (1=Elective, 2=Emergency), estmdate (surgery date). Join IPT via an.
-    CRITICAL: For ICD-9-CM procedure code lookups, ALWAYS use PTICD9CM.icd9cm or IPTSUMOPRT.icd9cm  (NOT PTOPRT.icd9cm which is mostly empty).
+    For OPD procedures, or if not sure if it's OPD or IPD, use PTICD9CM.icd9cm (can link with hn and an).
+    CRITICAL: For ICD-9-CM procedure code lookups, ALWAYS use IPTSUMOPRT.icd9cm as primary source (NOT PTOPRT.icd9cm which is mostly empty). PTICD9CM can be used as supplementary.
     CRITICAL: icd9cm codes have NO dots. Use '470%' not '47.0%' for appendectomy.
     IPT.receiveflag is NOT populated - do not use it for ER identification.
     For emergency vs elective surgery, use OPREQVST.optype = 2 (Emergency).

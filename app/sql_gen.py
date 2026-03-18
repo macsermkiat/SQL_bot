@@ -17,6 +17,7 @@ from app.schema_catalog import SchemaCatalog, get_schema_catalog, JoinStep
 from app.schema_retriever import SchemaRetriever, get_schema_retriever, reset_schema_retriever
 from app.concepts import ConceptLibrary, load_concepts
 from app.config import get_settings
+from app.learning_store import get_learning_store
 from app.llm import get_llm_client
 from app.models import SQLGenerationResponse, TokenUsage
 
@@ -301,6 +302,13 @@ def build_schema_context(
         for c in sorted(corrections):
             lines.append(c)
         lines.append("")
+
+    # Add learned SQL corrections from YAML (curated, proven patterns)
+    store = get_learning_store()
+    detailed_upper = {t.upper() for t in tables_to_include}
+    corrections_section = store.build_corrections_for_prompt(detailed_upper)
+    if corrections_section:
+        lines.append(corrections_section)
 
     return "\n".join(lines)
 

@@ -220,6 +220,7 @@ LVSTEXMBAC2,labexm,LABEXM,labexm,=,high,table match,relationships.md,,2,relation
 LVSTEXMBAC2,labgrp,LABGRP,labgrp,=,high,table match,relationships.md,,2,relationships.md,table match,,,LABGRP,labgrp,LVSTEXMBAC2,labgrp
 LVSTEXMBAC2,labno,LVSTEXM,labno,=,medium,LVSTEXM,relationships.md,,2,relationships.md,LVSTEXM,,,LVSTEXM,labno,LVSTEXMBAC2,labno
 MAINHPT,changwat,CHANGWAT,changwat,=,high,table match,relationships.md,,1,relationships.md,table match,,,CHANGWAT,changwat,MAINHPT,changwat
+INCPT,ordercode,MASTERORDER,ordercode,=,high,table match,relationships.md,,2,relationships.md,table match,,,MASTERORDER,ordercode,INCPT,ordercode
 MASTERORDER,dct,DCT,dct,=,high,table match,relationships.md,,1,relationships.md,table match,,,DCT,dct,MASTERORDER,dct
 MASTERORDER,incgrp,INCGRP,incgrp,=,high,table match,relationships.md,,2,relationships.md,table match,,,INCGRP,incgrp,MASTERORDER,incgrp
 MASTERORDER,lct,LCT,lct,=,high,table match,relationships.md,,2,relationships.md,table match,,,LCT,lct,MASTERORDER,lct

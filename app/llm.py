@@ -133,7 +133,10 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 - Emergency/ER visits -> CNER (NOT OVST.emrgncy which is just urgency triage level)
 - Emergency vs elective surgery -> OPREQVST.optype (1=Elective, 2=Emergency). IPT.receiveflag is NOT populated.
 - Surgery/procedure dates -> IPTSUMOPRT.indate or PTOPRT.oprtdatein (actual procedure times)
-- ICD-9-CM procedure codes -> PTICD9CM.icd9cm or IPTSUMOPRT.icd9cm (PTOPRT.icd9cm is mostly empty)
+- ICD-9-CM procedure codes -> IPTSUMOPRT.icd9cm (primary), PTICD9CM.icd9cm (supplementary). PTOPRT.icd9cm is mostly empty.
+- Procedure names -> JOIN ICD9CM on icd9cm to get name/thainame. IPTSUMOPRT has codes but often no names.
+- Procedure by charge code -> INCPT.ordercode = MASTERORDER.ordercode, then filter MASTERORDER.name/name_en with LIKE.
+- Comprehensive procedure counts -> UNION IPTSUMOPRT (ICD-9-CM) with INCPT+MASTERORDER (charge-based) for full coverage.
 - OR scheduling/surgery details -> OPREQVST (has an, optype, estmdate)
 - Delivery/birth -> DLVST, DLVSTDESC, DLVSTEXT
 - Blood pressure/vitals -> OVSTPRESS

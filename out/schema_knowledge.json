@@ -13992,13 +13992,22 @@
           "name": "ordercode",
           "data_type": "numeric",
           "base_type": "type/Decimal",
-          "comment": "",
+          "comment": "รหัสรายการค่าใช้จ่าย",
           "is_pk": false,
           "pk_confidence": "",
           "pk_reason": "",
-          "is_fk": false,
-          "fk_targets": [],
-          "join_peers": [],
+          "is_fk": true,
+          "fk_targets": [
+            {
+              "table": "MASTERORDER",
+              "column": "ordercode",
+              "confidence": "high",
+              "rel_type": "table match"
+            }
+          ],
+          "join_peers": [
+            "MASTERORDER.ordercode"
+          ],
           "join_warning": "",
           "is_phi": false,
           "correction_note": "",
@@ -14009,7 +14018,7 @@
           "name": "income",
           "data_type": "varchar",
           "base_type": "type/Text",
-          "comment": "",
+          "comment": "รหัสช่วยคีย์ค่ารักษา",
           "is_pk": false,
           "pk_confidence": "",
           "pk_reason": "",
@@ -27500,10 +27509,10 @@
           "name": "ordercode",
           "data_type": "numeric",
           "base_type": "type/Decimal",
-          "comment": "เลขอ้างอิงค่าใช้จ่าย",
-          "is_pk": false,
-          "pk_confidence": "",
-          "pk_reason": "",
+          "comment": "เลขอ้างอิงค่าใช้จ่าย (PK)",
+          "is_pk": true,
+          "pk_confidence": "high",
+          "pk_reason": "target_of_table_match",
           "is_fk": true,
           "fk_targets": [
             {
@@ -27514,7 +27523,7 @@
             }
           ],
           "join_peers": [
-            "MASTERSALE.ordercode"
+            "MASTERSALE.ordercode,INCPT.ordercode"
           ],
           "join_warning": "",
           "is_phi": false,
@@ -43512,6 +43521,17 @@
       "warning_to": ""
     },
     {
+      "from_table": "INCPT",
+      "from_column": "ordercode",
+      "to_table": "MASTERORDER",
+      "to_column": "ordercode",
+      "confidence": "high",
+      "rel_type": "table match",
+      "source": "relationships.md",
+      "warning_from": "",
+      "warning_to": ""
+    },
+    {
       "from_table": "MASTERORDER",
       "from_column": "dct",
       "to_table": "DCT",
@@ -46054,7 +46074,7 @@
   "stats": {
     "total_tables": 123,
     "total_columns": 2183,
-    "total_join_edges": 399,
+    "total_join_edges": 400,
     "total_families": 65,
     "total_family_headers": 10,
     "total_detail_tables": 17

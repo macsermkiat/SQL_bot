@@ -154,21 +154,47 @@ surgery_inpatient:
   description: "Inpatient surgery/procedure lookup and emergency surgery identification"
   tables:
     - "IPTSUMOPRT"
+    - "ICD9CM"
     - "INCPT"
+    - "MASTERORDER"
     - "PTOPRT"
     - "OPREQVST"
   notes: >
     CRITICAL TABLE SELECTION for procedure queries:
     - IPTSUMOPRT: PRIMARY source for inpatient procedure ICD-9-CM codes. Medical records summary. Join IPT via an. Has indate/outdate.
-      PTICD9CM is NOT the primary procedure table - use IPTSUMOPRT instead.
-    - INCPT: Charge/expense table. Use charge codes (รหัสค่าใช้จ่าย) to identify procedures for comprehensive coverage.
+      IMPORTANT: IPTSUMOPRT has icd9cm codes but often WITHOUT procedure names.
+      Always JOIN ICD9CM table to get the procedure name:
+      IPTSUMOPRT.icd9cm = ICD9CM.icd9cm -> ICD9CM.name (English), ICD9CM.thainame (Thai).
+    - ICD9CM: Reference table for ICD-9-CM procedure codes. Has name, thainame, icd10tm, orflag (1=surgical).
+      ALWAYS join this to get human-readable procedure names from IPTSUMOPRT codes.
+    - INCPT: Charge/expense table. Use INCPT.ordercode to JOIN MASTERORDER for procedure identification.
       Procedures that may not appear in IPTSUMOPRT can be found via INCPT charge codes.
-      For complete procedure counts, consider combining IPTSUMOPRT (ICD-9-CM based) with INCPT (charge-based).
+      INCPT has hn, an, vn, incdate - provides patient and date context.
+      For complete procedure counts, combine IPTSUMOPRT (ICD-9-CM based) with INCPT+MASTERORDER (charge-based).
+    - MASTERORDER: Master registry of charge items (ทะเบียนรายการค่ารักษา).
+      Key columns: ordercode (PK), name (Thai), name_en (English), income (charge key code).
+      JOIN: INCPT.ordercode = MASTERORDER.ordercode to get procedure/item names.
+      Use MASTERORDER.name or name_en with LIKE to identify specific procedures by charge code.
     - PTOPRT: transactional procedure records with oprtact code and actual times (oprtdatein/oprtdateout). Join IPT via an. WARNING: PTOPRT.icd9cm is mostly EMPTY - do NOT rely on it for ICD-9-CM lookups.
     - OPREQVST: OR scheduling with optype (1=Elective, 2=Emergency), estmdate (surgery date). Join IPT via an.
     For OPD procedures, or if not sure if it's OPD or IPD, use PTICD9CM.icd9cm (can link with hn and an).
     CRITICAL: For ICD-9-CM procedure code lookups, ALWAYS use IPTSUMOPRT.icd9cm as primary source (NOT PTOPRT.icd9cm which is mostly empty). PTICD9CM can be used as supplementary.
     CRITICAL: icd9cm codes have NO dots. Use '470%' not '47.0%' for appendectomy.
+    COMPREHENSIVE PROCEDURE QUERY PATTERN (best coverage):
+    ```sql
+    -- Source 1: ICD-9-CM based (IPTSUMOPRT + ICD9CM for names)
+    SELECT ipt."hn", ipt."dchdate" AS proc_date, ic."name" AS proc_name, 'ICD9CM' AS source
+    FROM "KCMH_HIS"."IPTSUMOPRT" op
+    INNER JOIN "KCMH_HIS"."IPT" ipt ON op."an" = ipt."an"
+    INNER JOIN "KCMH_HIS"."ICD9CM" ic ON op."icd9cm" = ic."icd9cm"
+    WHERE op."icd9cm" LIKE '470%'
+    UNION ALL
+    -- Source 2: Charge-based (INCPT + MASTERORDER for names)
+    SELECT inc."hn", inc."incdate" AS proc_date, mo."name_en" AS proc_name, 'CHARGE' AS source
+    FROM "KCMH_HIS"."INCPT" inc
+    INNER JOIN "KCMH_HIS"."MASTERORDER" mo ON inc."ordercode" = mo."ordercode"
+    WHERE LOWER(mo."name_en") LIKE '%appendectomy%' OR LOWER(mo."name") LIKE '%ไส้ติ่ง%'
+    ```
     IPT.receiveflag is NOT populated - do not use it for ER identification.
     For emergency vs elective surgery, use OPREQVST.optype = 2 (Emergency).
     LOS calculation: IPT.dchdate::date - IPT.rgtdate::date.

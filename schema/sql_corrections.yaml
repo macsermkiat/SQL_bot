@@ -12,10 +12,40 @@
 # To add: run `python -m app.learning_store graduate` to promote
 # high-confidence patterns from out/learned_patterns.jsonl into this file.
 
-# --- Example entries (remove/replace with real patterns as they accumulate) ---
+procedure_icd9cm_missing_names:
+  tables: ["IPTSUMOPRT", "ICD9CM"]
+  wrong: >
+    SELECT CASE WHEN "icd9cm" = '4701' THEN 'Laparoscopic' ... END
+    (hardcoding procedure names from icd9cm codes)
+  right: >
+    JOIN "KCMH_HIS"."ICD9CM" ic ON op."icd9cm" = ic."icd9cm"
+    then use ic."name" or ic."thainame" for procedure names
+  reason: >
+    IPTSUMOPRT has icd9cm codes but often no procedure names.
+    Always JOIN ICD9CM reference table to get name/thainame.
+    Never hardcode procedure names from ICD codes.
 
-# example_vstdate_ptdiag:
-#   tables: ["PTDIAG"]
-#   wrong: 'WHERE "vstdate" >= ...'
-#   right: 'WHERE "diagdate" >= ...'
-#   reason: "PTDIAG has no vstdate column. The date column is diagdate."
+procedure_incpt_masterorder_coverage:
+  tables: ["INCPT", "MASTERORDER", "IPTSUMOPRT"]
+  wrong: >
+    Using only IPTSUMOPRT or PTICD9CM for procedure counts
+  right: >
+    UNION IPTSUMOPRT (ICD-9-CM based) with INCPT JOIN MASTERORDER
+    (charge-based) for comprehensive procedure coverage.
+    INCPT.ordercode = MASTERORDER.ordercode, then filter by
+    MASTERORDER.name_en or MASTERORDER.name with LIKE.
+  reason: >
+    Some procedures appear in charge records (INCPT+MASTERORDER)
+    but not in IPTSUMOPRT ICD-9-CM records. Combining both sources
+    gives more complete procedure counts.
+
+procedure_pticd9cm_not_primary:
+  tables: ["PTICD9CM", "IPTSUMOPRT"]
+  wrong: >
+    Using PTICD9CM as primary source for inpatient procedure queries
+  right: >
+    Use IPTSUMOPRT as primary source for inpatient ICD-9-CM procedures.
+    PTICD9CM is supplementary (covers OPD+IPD but less reliable for IPD).
+  reason: >
+    IPTSUMOPRT is the medical records summary and the authoritative
+    source for inpatient procedure codes. PTICD9CM can miss IPD entries.

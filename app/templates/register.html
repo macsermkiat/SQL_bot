@@ -65,12 +65,16 @@
                     type="text"
                     id="employee_id"
                     name="employee_id"
-                    placeholder="Employee ID"
+                    placeholder="1234567"
                     required
-                    maxlength="50"
+                    maxlength="7"
+                    minlength="7"
+                    pattern="\d{7}"
+                    title="Must be exactly 7 digits"
+                    inputmode="numeric"
                     value="{{ form_data.employee_id or '' }}"
                 >
-                <span class="form-hint">Your hospital code will be used as your login password</span>
+                <span class="form-hint">7-digit hospital code (used as your login password)</span>
             </div>
             <button type="submit" class="login-button">Register</button>
         </form>

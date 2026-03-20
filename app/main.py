@@ -111,12 +111,14 @@ def _get_client_ip(request: Request) -> str:
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
+async def login_page(request: Request, registered: str | None = None):
     """Serve login page. Redirect to chat if already authenticated."""
     user = get_current_user_from_cookie(request)
     if user is not None:
         return RedirectResponse(url="/", status_code=302)
-    return templates.TemplateResponse(request, "login.html", {"error": None})
+    return templates.TemplateResponse(
+        request, "login.html", {"error": None, "registered": registered is not None},
+    )
 
 
 @app.post("/login")
@@ -252,6 +254,15 @@ async def register(
             status_code=400,
         )
 
+    # Validate employee ID: must be exactly 7 digits
+    if not re.fullmatch(r"\d{7}", employee_id):
+        return _render_register(
+            request,
+            error="Hospital Code (ID) must be exactly 7 digits.",
+            form_data=form_data,
+            status_code=400,
+        )
+
     # Register: employee_id stored in CSV ID column (used as login password)
     store = get_user_store()
     result = store.register(
@@ -270,9 +281,9 @@ async def register(
 
     limiter.record_success(client_ip)
     logger.info("New user registered: %s", email)
-    return _render_register(
-        request,
-        success="Account created successfully! Use your hospital code (ID) as your password to login.",
+    return RedirectResponse(
+        url="/login?registered=1",
+        status_code=302,
     )
 
 

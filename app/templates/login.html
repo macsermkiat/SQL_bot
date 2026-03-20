@@ -11,6 +11,10 @@
             <p>Hospital Analytics Assistant</p>
         </div>
 
+        {% if registered %}
+        <div class="register-success" role="alert" aria-live="polite">Account created successfully! Use your hospital code (ID) as your password to login.</div>
+        {% endif %}
+
         {% if error %}
         <div class="login-error" role="alert" aria-live="assertive">{{ error }}</div>
         {% endif %}

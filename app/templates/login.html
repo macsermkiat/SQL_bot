@@ -4,7 +4,7 @@
 {% block body_class %}login-page{% endblock %}
 
 {% block content %}
-<div id="main-content" class="login-container">
+<main id="main-content" class="login-container">
     <div class="login-card">
         <div class="login-header">
             <h1>KCMH SQL Bot</h1>
@@ -16,10 +16,10 @@
         {% endif %}
 
         {% if error %}
-        <div class="login-error" role="alert" aria-live="assertive">{{ error }}</div>
+        <div class="login-error" id="login-error" role="alert" aria-live="assertive">{{ error }}</div>
         {% endif %}
 
-        <form method="POST" action="/login" class="login-form">
+        <form method="POST" action="/login" class="login-form" id="login-form">
             <div class="form-group">
                 <label for="email">Email</label>
                 <input
@@ -29,6 +29,7 @@
                     placeholder="your.name@chulahospital.org"
                     required
                     autocomplete="email"
+                    {% if error %}aria-describedby="login-error"{% endif %}
                 >
             </div>
             <div class="form-group">
@@ -37,17 +38,33 @@
                     type="password"
                     id="password"
                     name="password"
-                    placeholder="Employee ID"
+                    placeholder="Hospital Code"
                     required
                     autocomplete="current-password"
+                    {% if error %}aria-describedby="login-error"{% endif %}
                 >
             </div>
-            <button type="submit" class="login-button">Login</button>
+            <button type="submit" class="login-button" id="login-button">Login</button>
         </form>
 
         <div class="register-link">
             Don't have an account? <a href="/register">Register</a>
         </div>
     </div>
-</div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var form = document.getElementById("login-form");
+    var btn = document.getElementById("login-button");
+    if (form && btn) {
+        form.addEventListener("submit", function() {
+            btn.disabled = true;
+            btn.textContent = "Logging in...";
+        });
+    }
+})();
+</script>
 {% endblock %}

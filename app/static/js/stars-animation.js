@@ -11,8 +11,10 @@
     var ctx = canvas.getContext("2d");
 
     // Configuration
+    // Reduce star count on mobile for performance
+    var isMobile = window.innerWidth < 768;
     var CONFIG = {
-        starCount: 400,
+        starCount: isMobile ? 120 : 200,
         baseSpeed: 0.015,        // moderate speed (not warp)
         speedVariance: 0.008,
         trailLength: 0.35,       // trail length multiplier
@@ -22,7 +24,7 @@
         centerX: 0.5,            // vanishing point X (0-1)
         centerY: 0.48,           // vanishing point Y (slightly above center)
         colorShift: true,        // shift to blue when fast
-        nebulaParticles: 25,     // subtle nebula dust particles
+        nebulaParticles: isMobile ? 0 : 15,
     };
 
     // Color palette for stars

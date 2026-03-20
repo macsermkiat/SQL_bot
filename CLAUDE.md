@@ -17,10 +17,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - One tack per subagent for focused execution
 
 ### 3. Self-Improvement Loop
-- After ANY correction from the user: update `tasks/lessons.md` with the pattern
+- After ANY correction from the user: capture the pattern in memory or conversation
 - Write rules for yourself that prevent the same mistake
 - Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
 
 ### 4. Verification Before Done
 - Never mark a task complete without proving it works
@@ -42,18 +41,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Task Management
 
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+- Use plan mode or TodoWrite tool for multi-step tasks
+- Check in with user before starting implementation
+- Track progress and mark items complete as you go
+- High-level summary at each step
 
 ## Core Principles
 
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimat Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
 ## Project Overview
 
@@ -67,8 +64,36 @@ The bot:
 5) validates the result with sanity checks,
 6) replies in plain Thai/English with definitions, caveats, and (optionally) the SQL.
 
-This repo currently starts from schema documentation (Mermaid ER diagrams). The next milestone is an end-to-end chat app.
+The end-to-end chat app is live: question -> concept mapping -> SQL generation -> execution -> Thai/English response.
 
+## Commands
+
+```bash
+uv sync                                                          # Install dependencies
+./run.sh                                                         # Start server (generates schema if needed)
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload # Dev server
+uv run pytest                                                    # Run all tests
+uv run pytest tests/test_sql_guard.py -v                         # Run specific test file
+```
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `app/main.py` | FastAPI routes, auth endpoints, chat SSE streaming |
+| `app/sql_gen.py` | SQL generation pipeline (question -> SQL) |
+| `app/sql_guard.py` | SQL safety validation (SELECT-only, PHI blocking) |
+| `app/llm.py` | Anthropic Claude API calls with system prompts |
+| `app/schema_retriever.py` | Question-aware table/column discovery |
+| `app/schema_catalog.py` | Schema knowledge loaded from parsed CSVs |
+| `app/auth.py` | UserStore (CSV-based), session tokens |
+| `app/concepts.py` | Clinical concept loader from `schema/concepts.yaml` |
+| `app/config.py` | Settings via pydantic-settings + .env |
+| `schema/concepts.yaml` | Domain knowledge: clinical terms -> SQL patterns |
+| `schema/join_edges.csv` | Table join mappings with confidence scores |
+| `schema/sql_corrections.yaml` | Self-learned SQL error fix patterns |
+| `usr/ID.csv` | User credentials (gitignored) |
+| `config/super_users.json` | Super user email list |
 
 ---
 
@@ -157,75 +182,30 @@ If join_warning is present, treat that edge as suspicious and prefer the “home
 
 ---
 
-## Expected Tech Stack
+## Tech Stack
 
-- Python 3.11+
-- **Package manager**: uv
-- **Backend**: FastAPI (+ uvicorn)
-- **Frontend**: HTML/CSS/JavaScript with space theme
-- **Authentication**: FastAPI sessions with file-based user credentials
-- **LLM**: Anthropic Claude API
+- Python 3.11+, **uv** package manager
+- **Backend**: FastAPI + uvicorn
+- **Frontend**: Jinja2 templates + static JS/CSS (space theme), served from `app/templates/` and `app/static/`
+- **LLM**: Anthropic Claude API (`anthropic` SDK)
 - **SQL parsing/guard**: sqlglot
-- **DB driver**: psycopg (preferred) or asyncpg
-- **Config**: python-dotenv
-- Optional:
-  - RAG / search (only if needed): ChromaDB
+- **DB driver**: psycopg + psycopg-pool
+- **Config**: pydantic-settings + python-dotenv (`.env` file)
+- **Auth**: itsdangerous signed cookies
 
 ---
 
-## Web Interface & Authentication
+## Authentication
 
-### Authentication System
-- **File-based user management**: Read credentials from `config/users.json`
-- **No user registration**: Admin manually adds users to the file
-- **Session-based auth**: FastAPI sessions with secure cookies
-- **Password hashing**: Use bcrypt or passlib for stored passwords
+- **CSV-based credentials**: `usr/ID.csv` (columns: NAME, ID, Department, E-mail)
+- **Self-registration**: `/register` — requires @chula.ac.th or @chulahospital.org email, 7-digit hospital code as password
+- **Super users**: Listed in `config/super_users.json`
+- **Sessions**: Signed cookies via itsdangerous (URLSafeTimedSerializer)
+- **Passwords**: Hospital code (ID column) used as plaintext password — no hashing
 
 ### User Roles
-1. **super_user** (admin):
-   - Sees generated SQL in responses
-   - Can enable/disable SQL visibility
-   - Access to system logs and query history
-   
-2. **standard_user** (default):
-   - Sees only natural language answers with aggregated results
-   - SQL is hidden by default
-   - Query results only (no SQL code exposure)
-
-
-**Components**:
-1. **Login Page**:
-   - Centered login form with glassmorphism card
-   - Floating stars animation in background
-   - Hospital logo/name at top
-   - Username and password fields
-   - "Login" button with glow effect
-
-2. **Chat Interface**:
-   - Fixed header with user info and logout button
-   - Main chat area with message bubbles
-   - User messages: Right-aligned, semi-transparent cards
-   - Bot messages: Left-aligned with expandable sections
-   - Input area: Fixed bottom with send button
-   - Loading indicator: Pulsing stars or animated dots
-
-3. **Message Display** (for standard users):
-   - Direct answer with numbers (prominent)
-   - Definitions and timeframe (expandable section)
-   - Caveats and confidence level
-   - NO SQL shown
-
-4. **Message Display** (for super users):
-   - All standard user content PLUS
-   - Expandable "View SQL" section with syntax highlighting
-   - Query execution time
-   - Row count returned
-
-### Technical Implementation
-- **Static files**: Serve from `app/static/` (CSS, JS, images)
-- **Templates**: Jinja2 templates in `app/templates/`
-- **WebSocket**: Consider for real-time chat (optional, can use AJAX polling initially)
-- **Responsive**: Must work on tablets and desktops
+1. **super_user**: Sees generated SQL, query execution time, row count
+2. **standard_user**: Sees only natural language answers with aggregated results, no SQL
 
 
 

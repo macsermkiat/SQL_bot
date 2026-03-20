@@ -168,7 +168,6 @@ import re
 
 ALLOWED_EMAIL_DOMAINS = {"chula.ac.th", "chulahospital.org"}
 _EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-_MIN_PASSWORD_LENGTH = 6
 
 
 def _render_register(
@@ -204,16 +203,13 @@ async def register(
     email: str = Form(...),
     department: str = Form(...),
     employee_id: str = Form(...),
-    password: str = Form(...),
-    confirm_password: str = Form(...),
 ):
-    """Handle user registration."""
+    """Handle user registration. Employee ID is used as the login password."""
     # Strip all inputs once at the boundary
     name = name.strip()
     email = email.strip().lower()
     department = department.strip()
     employee_id = employee_id.strip()
-    password = password.strip()
 
     form_data = {
         "name": name,
@@ -235,7 +231,7 @@ async def register(
         )
 
     # Validate required fields
-    if not all([name, email, department, employee_id, password]):
+    if not all([name, email, department, employee_id]):
         return _render_register(
             request, error="All fields are required.", form_data=form_data, status_code=400,
         )
@@ -256,26 +252,11 @@ async def register(
             status_code=400,
         )
 
-    # Validate password length
-    if len(password) < _MIN_PASSWORD_LENGTH:
-        return _render_register(
-            request,
-            error=f"Password must be at least {_MIN_PASSWORD_LENGTH} characters.",
-            form_data=form_data,
-            status_code=400,
-        )
-
-    # Validate password match
-    if password != confirm_password:
-        return _render_register(
-            request, error="Passwords do not match.", form_data=form_data, status_code=400,
-        )
-
-    # Register: password stored in CSV ID column (used for login verification)
+    # Register: employee_id stored in CSV ID column (used as login password)
     store = get_user_store()
     result = store.register(
         name=name,
-        password=password,
+        password=employee_id,
         department=department,
         email=email,
         csv_path=settings.users_csv_path,
@@ -289,7 +270,10 @@ async def register(
 
     limiter.record_success(client_ip)
     logger.info("New user registered: %s", email)
-    return _render_register(request, success="Account created successfully! You can now login.")
+    return _render_register(
+        request,
+        success="Account created successfully! Use your hospital code (ID) as your password to login.",
+    )
 
 
 @app.post("/logout")

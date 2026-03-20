@@ -164,6 +164,134 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
     return response
 
 
+import re
+
+ALLOWED_EMAIL_DOMAINS = {"chula.ac.th", "chulahospital.org"}
+_EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+_MIN_PASSWORD_LENGTH = 6
+
+
+def _render_register(
+    request: Request,
+    *,
+    error: str | None = None,
+    success: str | None = None,
+    form_data: dict | None = None,
+    status_code: int = 200,
+):
+    """Render the registration template with consistent context."""
+    return templates.TemplateResponse(
+        request,
+        "register.html",
+        {"error": error, "success": success, "form_data": form_data or {}},
+        status_code=status_code,
+    )
+
+
+@app.get("/register", response_class=HTMLResponse)
+async def register_page(request: Request):
+    """Serve registration page. Redirect to chat if already authenticated."""
+    user = get_current_user_from_cookie(request)
+    if user is not None:
+        return RedirectResponse(url="/", status_code=302)
+    return _render_register(request)
+
+
+@app.post("/register")
+async def register(
+    request: Request,
+    name: str = Form(...),
+    email: str = Form(...),
+    department: str = Form(...),
+    employee_id: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    """Handle user registration."""
+    # Strip all inputs once at the boundary
+    name = name.strip()
+    email = email.strip().lower()
+    department = department.strip()
+    employee_id = employee_id.strip()
+    password = password.strip()
+
+    form_data = {
+        "name": name,
+        "email": email,
+        "department": department,
+        "employee_id": employee_id,
+    }
+
+    # Rate limit registration attempts
+    client_ip = _get_client_ip(request)
+    limiter = get_login_limiter()
+    if limiter.is_blocked(client_ip):
+        remaining = limiter.remaining_seconds(client_ip)
+        return _render_register(
+            request,
+            error=f"Too many attempts. Please try again in {remaining} seconds.",
+            form_data=form_data,
+            status_code=429,
+        )
+
+    # Validate required fields
+    if not all([name, email, department, employee_id, password]):
+        return _render_register(
+            request, error="All fields are required.", form_data=form_data, status_code=400,
+        )
+
+    # Validate email format
+    if not _EMAIL_PATTERN.match(email):
+        return _render_register(
+            request, error="Please enter a valid email address.", form_data=form_data, status_code=400,
+        )
+
+    # Validate email domain
+    domain = email.rsplit("@", 1)[-1]
+    if domain not in ALLOWED_EMAIL_DOMAINS:
+        return _render_register(
+            request,
+            error="Email must be @chula.ac.th or @chulahospital.org",
+            form_data=form_data,
+            status_code=400,
+        )
+
+    # Validate password length
+    if len(password) < _MIN_PASSWORD_LENGTH:
+        return _render_register(
+            request,
+            error=f"Password must be at least {_MIN_PASSWORD_LENGTH} characters.",
+            form_data=form_data,
+            status_code=400,
+        )
+
+    # Validate password match
+    if password != confirm_password:
+        return _render_register(
+            request, error="Passwords do not match.", form_data=form_data, status_code=400,
+        )
+
+    # Register: password stored in CSV ID column (used for login verification)
+    store = get_user_store()
+    result = store.register(
+        name=name,
+        password=password,
+        department=department,
+        email=email,
+        csv_path=settings.users_csv_path,
+    )
+
+    if result is None:
+        limiter.record_failure(client_ip)
+        return _render_register(
+            request, error="This email is already registered.", form_data=form_data, status_code=409,
+        )
+
+    limiter.record_success(client_ip)
+    logger.info("New user registered: %s", email)
+    return _render_register(request, success="Account created successfully! You can now login.")
+
+
 @app.post("/logout")
 async def logout():
     """Clear session cookie and redirect to login."""

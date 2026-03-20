@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Register - KCMH SQL Bot{% endblock %}
+{% block body_class %}login-page{% endblock %}
+
+{% block content %}
+<div id="main-content" class="login-container register-container">
+    <div class="login-card">
+        <div class="login-header">
+            <h1>KCMH SQL Bot</h1>
+            <p>Create Account</p>
+        </div>
+
+        {% if error %}
+        <div class="login-error" role="alert" aria-live="assertive">{{ error }}</div>
+        {% endif %}
+
+        {% if success %}
+        <div class="register-success" role="alert" aria-live="polite">{{ success }}</div>
+        {% endif %}
+
+        <form method="POST" action="/register" class="login-form">
+            <div class="form-group">
+                <label for="name">Name</label>
+                <input
+                    type="text"
+                    id="name"
+                    name="name"
+                    placeholder="ชื่อ นามสกุล"
+                    required
+                    maxlength="200"
+                    autocomplete="name"
+                    value="{{ form_data.name or '' }}"
+                >
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    placeholder="your.name@chulahospital.org"
+                    required
+                    maxlength="200"
+                    autocomplete="email"
+                    value="{{ form_data.email or '' }}"
+                >
+                <span class="form-hint">@chula.ac.th or @chulahospital.org</span>
+            </div>
+            <div class="form-group">
+                <label for="department">Department</label>
+                <input
+                    type="text"
+                    id="department"
+                    name="department"
+                    placeholder="Department"
+                    required
+                    maxlength="200"
+                    value="{{ form_data.department or '' }}"
+                >
+            </div>
+            <div class="form-group">
+                <label for="employee_id">ID (Hospital Code)</label>
+                <input
+                    type="text"
+                    id="employee_id"
+                    name="employee_id"
+                    placeholder="Employee ID"
+                    required
+                    maxlength="50"
+                    value="{{ form_data.employee_id or '' }}"
+                >
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    placeholder="Password"
+                    required
+                    minlength="6"
+                    maxlength="200"
+                    autocomplete="new-password"
+                >
+            </div>
+            <div class="form-group">
+                <label for="confirm_password">Confirm Password</label>
+                <input
+                    type="password"
+                    id="confirm_password"
+                    name="confirm_password"
+                    placeholder="Confirm Password"
+                    required
+                    minlength="6"
+                    maxlength="200"
+                    autocomplete="new-password"
+                >
+            </div>
+            <button type="submit" class="login-button">Register</button>
+        </form>
+
+        <div class="register-link">
+            Already have an account? <a href="/login">Login</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

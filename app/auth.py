@@ -7,6 +7,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -23,9 +24,12 @@ logger = logging.getLogger(__name__)
 class UserStore:
     """Loads users from CSV and super_user list from JSON."""
 
+    _CSV_FIELDNAMES = ["NAME", "ID", "Department", "E-mail"]
+
     def __init__(self, csv_path: Path, super_users_path: Path) -> None:
         self._users: dict[str, dict[str, str]] = {}
         self._super_users: set[str] = set()
+        self._lock = threading.Lock()
         self._load_users(csv_path)
         self._load_super_users(super_users_path)
 
@@ -85,6 +89,61 @@ class UserStore:
             name=user["name"],
             department=user["department"],
             role=role,
+        )
+
+    def email_exists(self, email: str) -> bool:
+        """Check if an email is already registered."""
+        return email.strip().lower() in self._users
+
+    @staticmethod
+    def _sanitize_csv_value(value: str) -> str:
+        """Prevent CSV injection by escaping formula-triggering characters."""
+        if value and value[0] in ("=", "+", "-", "@", "\t", "\r", "\n"):
+            return f"'{value}"
+        return value
+
+    def register(
+        self,
+        name: str,
+        password: str,
+        department: str,
+        email: str,
+        csv_path: Path,
+    ) -> UserInfo | None:
+        """Register a new user by appending to the CSV and updating in-memory store.
+
+        The password is stored in the CSV ID column (matching existing login verification).
+        Returns UserInfo on success, None if email already exists.
+        """
+        with self._lock:
+            if email in self._users:
+                return None
+
+            safe_name = self._sanitize_csv_value(name)
+            safe_dept = self._sanitize_csv_value(department)
+
+            with open(csv_path, "a", encoding="utf-8-sig", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=self._CSV_FIELDNAMES)
+                writer.writerow({
+                    "NAME": safe_name,
+                    "ID": password,
+                    "Department": safe_dept,
+                    "E-mail": email,
+                })
+
+            self._users[email] = {
+                "name": name,
+                "id": password,
+                "department": department,
+            }
+
+        logger.info("Registered new user: %s", email)
+
+        return UserInfo(
+            email=email,
+            name=name,
+            department=department,
+            role="standard_user",
         )
 
     @property

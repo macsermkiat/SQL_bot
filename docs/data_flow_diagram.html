@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KCMH SQL Bot - Data Flow Diagram (IT Board)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; padding: 20px; }
+
+  .page { max-width: 1400px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); overflow: hidden; }
+
+  .header { background: linear-gradient(135deg, #1a237e, #283593); color: #fff; padding: 28px 40px; }
+  .header h1 { font-size: 26px; font-weight: 600; }
+  .header p { font-size: 14px; opacity: 0.85; margin-top: 6px; }
+
+  .content { padding: 32px 40px; }
+
+  /* Zone boxes */
+  .zone { border: 2px solid #ccc; border-radius: 10px; padding: 20px; margin-bottom: 24px; position: relative; }
+  .zone-label { position: absolute; top: -13px; left: 20px; background: #fff; padding: 0 10px; font-weight: 600; font-size: 14px; }
+
+  .zone-internal { border-color: #e57373; }
+  .zone-internal .zone-label { color: #c62828; }
+
+  .zone-external { border-color: #42a5f5; }
+  .zone-external .zone-label { color: #1565c0; }
+
+  .zone-logging { border-color: #66bb6a; }
+  .zone-logging .zone-label { color: #2e7d32; }
+
+  /* Nodes */
+  .nodes { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
+  .node { border: 2px solid #333; border-radius: 10px; padding: 16px; text-align: center; width: 200px; background: #fff; position: relative; }
+  .node-icon { font-size: 36px; margin-bottom: 8px; }
+  .node-name { font-weight: 700; font-size: 14px; color: #222; }
+  .node-detail { font-size: 11px; color: #666; margin-top: 4px; line-height: 1.4; }
+  .node-ip { background: #fff9c4; display: inline-block; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 12px; margin-top: 6px; }
+  .node-port { background: #e3f2fd; display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-top: 4px; }
+
+  .node-app { border-color: #c62828; background: #fff5f5; }
+  .node-db { border-color: #f57c00; background: #fff8e1; }
+  .node-llm { border-color: #6a1b9a; background: #f3e5f5; }
+  .node-log { border-color: #2e7d32; background: #e8f5e9; }
+  .node-user { border-color: #37474f; background: #eceff1; }
+
+  /* Flow table */
+  .flow-table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
+  .flow-table th { background: #263238; color: #fff; padding: 10px 14px; text-align: left; font-weight: 600; }
+  .flow-table td { padding: 10px 14px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+  .flow-table tr:hover td { background: #f5f5f5; }
+
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin: 1px; }
+  .tag-out { background: #ffcdd2; color: #b71c1c; }
+  .tag-in { background: #c8e6c9; color: #1b5e20; }
+  .tag-safe { background: #c8e6c9; color: #1b5e20; }
+  .tag-warn { background: #fff9c4; color: #f57f17; }
+  .tag-block { background: #e0e0e0; color: #616161; }
+  .tag-port { background: #e3f2fd; color: #0d47a1; }
+  .tag-freq { background: #f3e5f5; color: #6a1b9a; }
+  .tag-encrypt { background: #e8eaf6; color: #283593; }
+
+  .section-title { font-size: 18px; font-weight: 700; color: #1a237e; margin: 28px 0 12px 0; padding-bottom: 6px; border-bottom: 2px solid #1a237e; }
+
+  .phi-box { background: #fff3e0; border: 2px solid #e65100; border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+  .phi-box h3 { color: #e65100; margin-bottom: 8px; font-size: 15px; }
+  .phi-box ul { padding-left: 20px; font-size: 13px; line-height: 1.8; }
+  .phi-box li { color: #333; }
+
+  .summary-box { background: #e8eaf6; border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+  .summary-box h3 { color: #1a237e; margin-bottom: 8px; font-size: 15px; }
+  .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px; }
+  .summary-item { padding: 8px 12px; background: #fff; border-radius: 6px; }
+  .summary-item strong { display: block; color: #1a237e; margin-bottom: 2px; }
+
+  .arrow-section { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 0; flex-wrap: wrap; }
+  .arrow-box { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 8px; background: #fafafa; border: 1px solid #ddd; }
+  .arrow-box .label { font-size: 12px; font-weight: 600; }
+  .arrow-right { font-size: 20px; color: #c62828; }
+  .arrow-left { font-size: 20px; color: #2e7d32; }
+
+  .llm-call-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  .llm-call-table th { background: #6a1b9a; color: #fff; padding: 8px 12px; text-align: left; }
+  .llm-call-table td { padding: 8px 12px; border-bottom: 1px solid #e0e0e0; }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .page { box-shadow: none; }
+    .flow-table th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <h1>KCMH SQL Bot &mdash; Data Flow &amp; External Communication Diagram</h1>
+    <p>For IT Security Board Review &bull; Version 0.3.0 &bull; VM: ddcenter-1 (10.56.19.56) &bull; Generated 2026-03-30</p>
+  </div>
+
+  <div class="content">
+
+    <!-- ==================== ARCHITECTURE DIAGRAM ==================== -->
+    <div class="section-title">1. System Architecture</div>
+
+    <!-- Internal Zone -->
+    <div class="zone zone-internal">
+      <span class="zone-label">DD Server (Internal Network - 10.56.19.x)</span>
+      <div class="nodes">
+        <div class="node node-user">
+          <div class="node-icon">&#128100;</div>
+          <div class="node-name">Hospital Staff (Browser)</div>
+          <div class="node-detail">Authenticated users only<br>@chula.ac.th / @chulahospital.org</div>
+          <div class="node-ip">Internal Network</div>
+          <div class="node-port">HTTPS :443</div>
+        </div>
+
+        <div class="node node-app">
+          <div class="node-icon">&#9881;</div>
+          <div class="node-name">KCMH SQL Bot</div>
+          <div class="node-detail">FastAPI + Uvicorn<br>Python 3.11+<br>VM: ddcenter-1</div>
+          <div class="node-ip">10.56.19.56</div>
+          <div class="node-port">Port :8000</div>
+        </div>
+
+        <div class="node node-db">
+          <div class="node-icon">&#128451;</div>
+          <div class="node-name">KCMH HIS Database</div>
+          <div class="node-detail">PostgreSQL (read-only user)<br>Schema: KCMH_HIS<br>122 tables</div>
+          <div class="node-ip">10.56.19.60 / .61</div>
+          <div class="node-port">Port :5432</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- External Zone -->
+    <div class="zone zone-external">
+      <span class="zone-label">External Services (Internet - Outbound Only)</span>
+      <div class="nodes">
+        <div class="node node-llm">
+          <div class="node-icon">&#129302;</div>
+          <div class="node-name">Anthropic Claude API</div>
+          <div class="node-detail">LLM: claude-sonnet-4-6<br>SQL generation + answer formatting</div>
+          <div class="node-ip">api.anthropic.com</div>
+          <div class="node-port">HTTPS :443</div>
+        </div>
+
+        <div class="node node-log">
+          <div class="node-icon">&#128202;</div>
+          <div class="node-name">Supabase</div>
+          <div class="node-detail">Query log storage<br>REST API (fire-and-forget)<br>Optional - degrades gracefully</div>
+          <div class="node-ip">*.supabase.co</div>
+          <div class="node-port">HTTPS :443</div>
+        </div>
+
+        <div class="node node-log">
+          <div class="node-icon">&#128221;</div>
+          <div class="node-name">Notion API</div>
+          <div class="node-detail">Successful query logging<br>REST API (fire-and-forget)<br>Optional - degrades gracefully</div>
+          <div class="node-ip">api.notion.com</div>
+          <div class="node-port">HTTPS :443</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Flow arrows -->
+    <div class="arrow-section">
+      <div class="arrow-box">
+        <span class="label">User</span>
+        <span class="arrow-right">&rarr;</span>
+        <span class="label">SQL Bot</span>
+        <span class="arrow-right">&rarr;</span>
+        <span class="label">Claude API</span>
+      </div>
+      <div class="arrow-box">
+        <span class="label">SQL Bot</span>
+        <span class="arrow-right">&rarr;</span>
+        <span class="label">PostgreSQL</span>
+        <span class="arrow-left">&larr;</span>
+        <span class="label">(aggregated data only)</span>
+      </div>
+      <div class="arrow-box">
+        <span class="label">SQL Bot</span>
+        <span class="arrow-right">&rarr;</span>
+        <span class="label">Supabase / Notion</span>
+        <span class="label">(logs)</span>
+      </div>
+    </div>
+
+    <!-- ==================== DETAILED FLOW TABLE ==================== -->
+    <div class="section-title">2. Data Flow Detail (All External Communications)</div>
+
+    <table class="flow-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Connection</th>
+          <th>Direction</th>
+          <th>Protocol / Port</th>
+          <th>Data Sent OUT</th>
+          <th>Data Received IN</th>
+          <th>PHI Risk</th>
+          <th>Encryption</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1</strong></td>
+          <td><strong>SQL Bot &rarr; Anthropic Claude API</strong><br><code>api.anthropic.com</code></td>
+          <td><span class="tag tag-out">Outbound</span></td>
+          <td><span class="tag tag-port">HTTPS :443</span><br><span class="tag tag-encrypt">TLS 1.2+</span></td>
+          <td>
+            &bull; User question (Thai/English text)<br>
+            &bull; Schema metadata (table/column names, types)<br>
+            &bull; Concept definitions (clinical terms)<br>
+            &bull; Last 6 conversation messages<br>
+            &bull; Error context on retries<br>
+            <strong>NO patient data. NO query results.</strong>
+          </td>
+          <td>
+            &bull; Generated SQL (JSON)<br>
+            &bull; Assumptions &amp; confidence<br>
+            &bull; Formatted answer text<br>
+            &bull; Token usage counts
+          </td>
+          <td><span class="tag tag-safe">NONE</span><br>No patient data sent</td>
+          <td><span class="tag tag-encrypt">TLS</span></td>
+        </tr>
+        <tr>
+          <td><strong>2</strong></td>
+          <td><strong>SQL Bot &rarr; Anthropic Claude API</strong><br>(Answer Formatting call)</td>
+          <td><span class="tag tag-out">Outbound</span></td>
+          <td><span class="tag tag-port">HTTPS :443</span><br><span class="tag tag-encrypt">TLS 1.2+</span></td>
+          <td>
+            &bull; User question<br>
+            &bull; Query result columns &amp; first 20 rows<br>
+            &bull; Row count, truncation flag<br>
+            &bull; Assumptions &amp; concepts used<br>
+            <span class="tag tag-warn">AGGREGATED data only</span>
+          </td>
+          <td>
+            &bull; Formatted Thai/English answer
+          </td>
+          <td><span class="tag tag-warn">LOW</span><br>Aggregated results only (counts, rates, sums). PHI columns blocked by SQL Guard before query execution.</td>
+          <td><span class="tag tag-encrypt">TLS</span></td>
+        </tr>
+        <tr>
+          <td><strong>3</strong></td>
+          <td><strong>SQL Bot &rarr; PostgreSQL (HIS)</strong><br><code>10.56.19.60/61:5432</code></td>
+          <td><span class="tag tag-in">Internal</span></td>
+          <td><span class="tag tag-port">TCP :5432</span></td>
+          <td>
+            &bull; Generated SQL (SELECT only)<br>
+            &bull; EXPLAIN for validation
+          </td>
+          <td>
+            &bull; Query results (aggregated)<br>
+            &bull; Execution plan
+          </td>
+          <td><span class="tag tag-safe">CONTROLLED</span><br>Read-only user. PHI columns stripped by SQL Guard. Row limits enforced (max 2000).</td>
+          <td><span class="tag tag-block">Internal LAN</span></td>
+        </tr>
+        <tr>
+          <td><strong>4</strong></td>
+          <td><strong>SQL Bot &rarr; Supabase</strong><br><code>*.supabase.co</code></td>
+          <td><span class="tag tag-out">Outbound</span></td>
+          <td><span class="tag tag-port">HTTPS :443</span><br><span class="tag tag-encrypt">TLS 1.2+</span></td>
+          <td>
+            &bull; Session ID, query group ID<br>
+            &bull; User email &amp; role<br>
+            &bull; Question text<br>
+            &bull; Generated SQL<br>
+            &bull; Answer text<br>
+            &bull; Token counts, execution time<br>
+            &bull; Guard/explain validation results<br>
+            <strong>NO raw query result data</strong>
+          </td>
+          <td>
+            &bull; HTTP status only (201/error)
+          </td>
+          <td><span class="tag tag-warn">LOW</span><br>Contains user email. No patient data. Fire-and-forget (optional).</td>
+          <td><span class="tag tag-encrypt">TLS</span></td>
+        </tr>
+        <tr>
+          <td><strong>5</strong></td>
+          <td><strong>SQL Bot &rarr; Notion API</strong><br><code>api.notion.com</code></td>
+          <td><span class="tag tag-out">Outbound</span></td>
+          <td><span class="tag tag-port">HTTPS :443</span><br><span class="tag tag-encrypt">TLS 1.2+</span></td>
+          <td>
+            &bull; Same fields as Supabase (#4)<br>
+            &bull; Only on successful queries<br>
+            <strong>NO raw query result data</strong>
+          </td>
+          <td>
+            &bull; HTTP status only (201/error)
+          </td>
+          <td><span class="tag tag-warn">LOW</span><br>Contains user email. No patient data. Fire-and-forget (optional). Only on success.</td>
+          <td><span class="tag tag-encrypt">TLS</span></td>
+        </tr>
+        <tr>
+          <td><strong>6</strong></td>
+          <td><strong>Browser &rarr; SQL Bot</strong><br><code>10.56.19.56:8000</code></td>
+          <td><span class="tag tag-in">Inbound</span></td>
+          <td><span class="tag tag-port">HTTP :8000</span><br>(behind reverse proxy)</td>
+          <td>
+            &bull; Login credentials (hospital code)<br>
+            &bull; Question text<br>
+            &bull; Session cookie
+          </td>
+          <td>
+            &bull; HTML pages<br>
+            &bull; SSE stream (answer, SQL for super_users)<br>
+            &bull; Session cookie (signed, 8hr TTL)
+          </td>
+          <td><span class="tag tag-safe">NONE</span><br>No PHI in responses. Aggregated results only.</td>
+          <td><span class="tag tag-block">Internal LAN</span><br>(HTTPS via proxy)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ==================== LLM CALLS ==================== -->
+    <div class="section-title">3. Claude API Call Frequency (Per User Question)</div>
+
+    <table class="llm-call-table">
+      <thead>
+        <tr>
+          <th>Call #</th>
+          <th>Purpose</th>
+          <th>When</th>
+          <th>Data Sent to LLM</th>
+          <th>Tokens (approx)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag tag-freq">1</span></td>
+          <td><strong>SQL Generation</strong></td>
+          <td>Every question</td>
+          <td>System prompt (~4K tokens) + schema context (~8K) + concepts (~3K) + question + last 6 messages</td>
+          <td>~15-20K input, ~1-4K output</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-freq">2</span></td>
+          <td><strong>Answer Formatting</strong></td>
+          <td>After successful SQL execution</td>
+          <td>Question + first 20 result rows (aggregated) + assumptions + concepts</td>
+          <td>~1-3K input, ~0.5-1K output</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-freq">3-7</span></td>
+          <td><strong>Auto-Fix Retries</strong> (if needed)</td>
+          <td>Only on SQL errors (up to 5 retries)</td>
+          <td>Same as #1 + accumulated error messages + verified column list. Extended thinking enabled.</td>
+          <td>~20-25K input per retry</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="summary-box">
+      <h3>LLM Call Summary</h3>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <strong>Best Case (no errors)</strong>
+          2 API calls per question (generate + format)
+        </div>
+        <div class="summary-item">
+          <strong>Worst Case (all retries)</strong>
+          7 API calls per question (1 initial + 5 retries + 1 format)
+        </div>
+        <div class="summary-item">
+          <strong>Model</strong>
+          claude-sonnet-4-6 (configurable via CLAUDE_MODEL env var)
+        </div>
+        <div class="summary-item">
+          <strong>Max Tokens per Call</strong>
+          4,096 (normal) / 16,000 (extended thinking)
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== PHI PROTECTION ==================== -->
+    <div class="section-title">4. Personal Health Information (PHI) Protection</div>
+
+    <div class="phi-box">
+      <h3>Multi-Layer PHI Prevention</h3>
+      <ul>
+        <li><strong>Layer 1 &mdash; LLM System Prompt:</strong> Explicit instruction to NEVER output PHI columns (hn, cid, fname, lname, name, phone, address, dob, passport, mrn, email). PHI allowed in JOIN/WHERE only.</li>
+        <li><strong>Layer 2 &mdash; SQL Guard (sqlglot parser):</strong> Static analysis of generated SQL. Blocks queries that SELECT PHI columns. Enforces SELECT-only (no INSERT/UPDATE/DELETE/DROP). Validates all referenced tables/columns exist.</li>
+        <li><strong>Layer 3 &mdash; Database User:</strong> Read-only PostgreSQL user (<code>readonly</code>). Cannot modify data even if SQL guard is bypassed.</li>
+        <li><strong>Layer 4 &mdash; Row Limits:</strong> Aggregate queries by default. Non-aggregate capped at 2,000 rows. Statement timeout: 180 seconds (configurable).</li>
+        <li><strong>Layer 5 &mdash; Answer Formatting:</strong> Only aggregated results (counts, rates, grouped summaries) sent to Claude for formatting. First 20 rows max of already-filtered data.</li>
+        <li><strong>Layer 6 &mdash; Role-Based Output:</strong> Standard users see natural language answers only. Super users additionally see SQL, timing, and row counts. No user sees raw patient-level data.</li>
+      </ul>
+    </div>
+
+    <div class="section-title">5. What Data Leaves the Organization?</div>
+
+    <table class="flow-table">
+      <thead>
+        <tr>
+          <th>Destination</th>
+          <th>Data Sent</th>
+          <th>Contains Patient Data?</th>
+          <th>Contains PHI?</th>
+          <th>Required?</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Anthropic</strong><br>api.anthropic.com</td>
+          <td>User questions, schema metadata, clinical concept definitions, conversation history (6 msgs), aggregated query results (20 rows max)</td>
+          <td><span class="tag tag-warn">Aggregated only</span><br>Counts, rates, sums. Never individual patient records.</td>
+          <td><span class="tag tag-safe">NO</span><br>PHI columns blocked before SQL execution</td>
+          <td><strong>YES</strong> &mdash; Core functionality</td>
+        </tr>
+        <tr>
+          <td><strong>Supabase</strong><br>*.supabase.co</td>
+          <td>Query logs: question, SQL, answer, user email, token usage, timing</td>
+          <td><span class="tag tag-safe">NO</span></td>
+          <td><span class="tag tag-safe">NO</span><br>User email only (staff, not patient)</td>
+          <td>Optional &mdash; Logging only. App works without it.</td>
+        </tr>
+        <tr>
+          <td><strong>Notion</strong><br>api.notion.com</td>
+          <td>Same as Supabase (successful queries only)</td>
+          <td><span class="tag tag-safe">NO</span></td>
+          <td><span class="tag tag-safe">NO</span><br>User email only (staff, not patient)</td>
+          <td>Optional &mdash; Logging only. App works without it.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ==================== PORT SUMMARY ==================== -->
+    <div class="section-title">6. Port &amp; Protocol Summary</div>
+
+    <table class="flow-table">
+      <thead>
+        <tr>
+          <th>Connection</th>
+          <th>Source</th>
+          <th>Destination</th>
+          <th>Port</th>
+          <th>Protocol</th>
+          <th>Direction</th>
+          <th>Firewall Rule</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>User access</td>
+          <td>Hospital LAN</td>
+          <td>10.56.19.56</td>
+          <td>:8000 (or :443 via proxy)</td>
+          <td>HTTP/HTTPS</td>
+          <td>Inbound (internal)</td>
+          <td>Allow internal only</td>
+        </tr>
+        <tr>
+          <td>Database</td>
+          <td>10.56.19.56</td>
+          <td>10.56.19.60/61</td>
+          <td>:5432</td>
+          <td>PostgreSQL (TCP)</td>
+          <td>Internal</td>
+          <td>Allow internal only</td>
+        </tr>
+        <tr>
+          <td>Claude API</td>
+          <td>10.56.19.56</td>
+          <td>api.anthropic.com</td>
+          <td>:443</td>
+          <td>HTTPS (TLS 1.2+)</td>
+          <td>Outbound to Internet</td>
+          <td>Allow outbound :443 to api.anthropic.com</td>
+        </tr>
+        <tr>
+          <td>Supabase (optional)</td>
+          <td>10.56.19.56</td>
+          <td>*.supabase.co</td>
+          <td>:443</td>
+          <td>HTTPS (TLS 1.2+)</td>
+          <td>Outbound to Internet</td>
+          <td>Allow outbound :443 (or block if not needed)</td>
+        </tr>
+        <tr>
+          <td>Notion (optional)</td>
+          <td>10.56.19.56</td>
+          <td>api.notion.com</td>
+          <td>:443</td>
+          <td>HTTPS (TLS 1.2+)</td>
+          <td>Outbound to Internet</td>
+          <td>Allow outbound :443 (or block if not needed)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- ==================== RISK SUMMARY ==================== -->
+    <div class="section-title">7. Risk Assessment Summary</div>
+
+    <table class="flow-table">
+      <thead>
+        <tr>
+          <th>Risk</th>
+          <th>Level</th>
+          <th>Mitigation</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Patient data sent to external LLM</td>
+          <td><span class="tag tag-safe">LOW</span></td>
+          <td>6-layer PHI prevention. Only aggregated results (counts/rates) reach LLM for answer formatting. No individual patient records leave the server.</td>
+        </tr>
+        <tr>
+          <td>Unauthorized data modification</td>
+          <td><span class="tag tag-safe">NONE</span></td>
+          <td>Read-only database user. SQL Guard blocks all non-SELECT statements. sqlglot AST parsing enforces this.</td>
+        </tr>
+        <tr>
+          <td>Staff credentials in external logs</td>
+          <td><span class="tag tag-warn">LOW</span></td>
+          <td>Staff email logged to Supabase/Notion for audit trail. No passwords sent. Can disable external logging via env vars.</td>
+        </tr>
+        <tr>
+          <td>Schema metadata exposure</td>
+          <td><span class="tag tag-warn">LOW</span></td>
+          <td>Table/column names sent to Claude for SQL generation. Contains no patient data. Required for core functionality.</td>
+        </tr>
+        <tr>
+          <td>Session hijacking</td>
+          <td><span class="tag tag-safe">LOW</span></td>
+          <td>Signed cookies (itsdangerous). 8-hour TTL. Security headers (X-Frame-Options, CSP, etc.).</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="summary-box" style="margin-top: 24px;">
+      <h3>Key Takeaways for IT Board</h3>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <strong>External endpoints: 3</strong>
+          Anthropic (required), Supabase (optional), Notion (optional). All HTTPS :443.
+        </div>
+        <div class="summary-item">
+          <strong>Patient data leaving org: NONE</strong>
+          6-layer protection ensures only aggregated statistics reach external services.
+        </div>
+        <div class="summary-item">
+          <strong>LLM calls per question: 2-7</strong>
+          Minimum 2 (generate + format). Up to 7 with auto-fix retries on errors.
+        </div>
+        <div class="summary-item">
+          <strong>Firewall requirement</strong>
+          Outbound :443 to api.anthropic.com (required). Supabase/Notion optional.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

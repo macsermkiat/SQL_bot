@@ -30,13 +30,18 @@ PRIORITY_TABLES: list[str] = [
     "PTDIAG",     # Outpatient diagnoses
     "IPTSUMDIAG", # Inpatient diagnoses
     "ICD10",      # ICD-10 codes
+    "ICD9CM",     # ICD-9-CM procedure codes
     "PRSC",       # Prescription header
     "PRSCDT",     # Prescription details
     "MEDITEMDIS", # Drug master
     "LVST",       # Lab visit
     "LVSTEXM",    # Lab results
     "LABEXM",     # Lab exam master
-    "PTICD9CM",   # ICD-9-CM procedures (OPD+IPD, preferred over IPTSUMOPRT)
+    "PTICD9CM",   # ICD-9-CM procedures (OPD+IPD)
+    "IPTSUMOPRT", # Inpatient procedures (ICD-9-CM)
+    "CLINICLCT",  # Clinic/location master (ER, OPD, departments)
+    "WARD",       # Ward master (length of stay, bed family)
+    "DCT",        # Doctor master (physician lookups)
 ]
 
 

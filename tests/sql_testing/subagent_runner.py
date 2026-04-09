@@ -36,8 +36,9 @@ SCHEMA_CONTEXT = """
 ## KEY TABLES (Use "KCMH_HIS"."TABLE" format with double quotes)
 
 ### Visit/Admission Tables
-- OVST: OPD visits. PK: vn. Columns: vn, hn, vstdate, vsttime, cliniclct, pttype, dct, age
-- IPT: Inpatient admissions. PK: an. Columns: an, hn, vn, rgtdate (NOT admdate!), dchdate, ward, dchst
+- OVST: OPD visits. PK: vn. Columns: vn, hn, vstdate, vsttime, cliniclct, dct, age, emrgncy, an
+  NOTE: OVST does NOT have a "pttype" column. Insurance/pttype lives on ARPT, PRSC, PRSCDT, INCPT, PTOPRT, IPTADM — not OVST.
+- IPT: Inpatient admissions. PK: an. Columns: an, hn, vn, rgtdate (NOT admdate!), dchdate, ward, dchst, indate, outdate
   NOTE: Use "rgtdate" for admission/registration date, NOT "admdate"
 - PTDIAG: OPD diagnoses. Columns: vn, hn, icd10, diagtype
 - IPTSUMDIAG: IPD diagnoses. Columns: an, icd10, diagtype
@@ -55,8 +56,10 @@ SCHEMA_CONTEXT = """
   NOTE: PK is "meditem" NOT "meditemdis"
 
 ### Procedure Tables
-- IPTSUMOPRT: IPD procedures. Columns: an, icd9cm, indate, outdate, itemno
-  NOTE: Use "indate" for procedure date, NOT "oprdate"
+- IPTSUMOPRT: IPD procedures. Columns: an, icd9cm, oprtcnt, oprtside, orflag (5 columns only)
+  CRITICAL: IPTSUMOPRT has NO date column. To filter by procedure date,
+  join to IPT on "an" and use IPT.rgtdate (admission) or IPT.dchdate (discharge).
+  ICD-9-CM codes are stored WITHOUT dots: craniotomy '0124', appendectomy '4709' (use LIKE '470%').
 - PTICD9CM: OPD procedures. Columns: vn, icd9cm, cliniclct
 - ICD9CM: Procedure master. PK: icd9cm. Columns: icd9cm, name, thainame
 
@@ -77,19 +80,22 @@ SCHEMA_CONTEXT = """
 - IPT has NO age column - calculate from patient birthdate if needed
 - PRSCDT uses meditem (NOT meditemdis) for drug FK
 - MEDITEMDIS PK is meditem (NOT meditemdis)
-- IPTSUMOPRT uses indate (NOT oprdate) for procedure date
+- IPTSUMOPRT has NO date column - JOIN to IPT on "an" and filter on IPT.rgtdate/IPT.dchdate
+- OVST has NO pttype column - use ARPT.pttype (or PRSC/PRSCDT/INCPT) for insurance-type queries
 
 ## JOIN PATTERNS
 - Visits to clinic: OVST.cliniclct = CLINICLCT.cliniclct
 - Prescriptions to patient: PRSC.hn links to other tables via hn
-- Prescription items: PRSC.prscno = PRSCDT.prscno
+- Prescription items: PRSC.prscno = PRSCDT.prscno AND PRSC.sphmlct = PRSCDT.sphmlct
+  (join on BOTH keys; prvno is an authorization ref, NOT a join key)
 - Drug lookup: PRSCDT.meditem = MEDITEMDIS.meditem (NOT meditemdis!)
 - Labs order: LVST.labno = LVSTEXM.labno
 - Lab test lookup: LVSTEXM.labexm = LABEXM.labexm
 - OPD Diagnoses: OVST.vn = PTDIAG.vn, PTDIAG.icd10 = ICD10.icd10
 - IPD Diagnoses: IPT.an = IPTSUMDIAG.an
-- IPD Procedures: IPT.an = IPTSUMOPRT.an
+- IPD Procedures: IPT.an = IPTSUMOPRT.an (use IPT.rgtdate for date filter)
 - Procedure lookup: IPTSUMOPRT.icd9cm = ICD9CM.icd9cm
+- Insurance types: ARPT.pttype = PTTYPE.pttype (ARPT is one row per visit/charge)
 
 ## CRITICAL JOIN PATTERNS FOR COMPLEX QUERIES
 - Drug + Diagnosis (same patient): Join via hn

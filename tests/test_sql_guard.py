@@ -489,6 +489,115 @@ class TestCatalogIntegration:
         assert "vn" in ovst_cols
 
 
+class TestCTEJoinValidation:
+    """Joins involving CTE-named 'tables' must NOT be sent to
+    catalog.validate_join — CTEs are user-defined, not in the schema.
+
+    Regression: a CTE name like KIDNEY_TESTS would resolve to itself
+    via table_aliases and then be passed to catalog.validate_join,
+    which always returns 'heuristic' confidence (because the CTE isn't
+    a real table), producing spurious low-confidence join warnings on
+    every CTE-using query.
+    """
+
+    @pytest.fixture
+    def tracking_catalog(self):
+        """A mock catalog that records every validate_join call."""
+        from unittest.mock import MagicMock
+        from app.schema_catalog import JoinValidation
+
+        catalog = MagicMock()
+        catalog.validate_join = MagicMock(
+            return_value=JoinValidation(
+                valid=True,
+                confidence="heuristic",
+                score=10,
+                warnings=[],
+                suggestion="",
+            )
+        )
+        catalog.get_best_join = MagicMock(return_value=None)
+        catalog.table_exists.return_value = True
+        catalog.validate_sql_references.return_value = ([], [])
+        catalog.find_phi_columns.return_value = []
+        return catalog
+
+    def test_cte_to_real_table_join_not_validated(self, tracking_catalog):
+        """A join from a CTE to a real table must skip catalog validation."""
+        sql = """
+        WITH kidney_tests AS (
+            SELECT "labexm" FROM "KCMH_HIS"."LABEXM"
+            WHERE "labexmname" LIKE '%kidney%'
+        )
+        SELECT COUNT(*) AS n
+        FROM "KCMH_HIS"."LVSTEXM" lv
+        JOIN kidney_tests kt ON lv."labexm" = kt."labexm"
+        """
+        result = validate_sql(sql, catalog=tracking_catalog, validate_joins=True)
+
+        assert result.valid, f"SQL must validate, got: {result.error}"
+        # No CTE-related join warning should be raised
+        cte_warnings = [
+            jw for jw in result.join_warnings
+            if "KIDNEY_TESTS" in (jw.from_table.upper(), jw.to_table.upper())
+        ]
+        assert not cte_warnings, (
+            f"CTE join must not produce join warnings: {cte_warnings}"
+        )
+
+        # And catalog.validate_join should NOT have been called for the CTE
+        for call in tracking_catalog.validate_join.call_args_list:
+            tables = (
+                call.kwargs.get("table_a", "").upper(),
+                call.kwargs.get("table_b", "").upper(),
+            )
+            assert "KIDNEY_TESTS" not in tables, (
+                f"validate_join called with CTE name: {call.kwargs}"
+            )
+
+    def test_cte_to_cte_join_not_validated(self, tracking_catalog):
+        """Joins between two CTEs must also skip catalog validation."""
+        sql = """
+        WITH visits_2024 AS (
+            SELECT "vn", "cliniclct" FROM "KCMH_HIS"."OVST"
+            WHERE "vstdate" >= '2024-01-01'
+        ),
+        clinic_lookup AS (
+            SELECT "cliniclct", "name" FROM "KCMH_HIS"."CLINICLCT"
+        )
+        SELECT cl."name", COUNT(*) AS n
+        FROM visits_2024 v
+        JOIN clinic_lookup cl ON v."cliniclct" = cl."cliniclct"
+        GROUP BY cl."name"
+        """
+        result = validate_sql(sql, catalog=tracking_catalog, validate_joins=True)
+
+        assert result.valid, f"SQL must validate, got: {result.error}"
+        cte_set = {"VISITS_2024", "CLINIC_LOOKUP"}
+        for jw in result.join_warnings:
+            assert not (
+                jw.from_table.upper() in cte_set
+                or jw.to_table.upper() in cte_set
+            ), f"CTE-to-CTE join produced warning: {jw}"
+
+    def test_real_table_to_real_table_join_still_validated(
+        self, tracking_catalog
+    ):
+        """Regression guard: real-table joins must still be validated."""
+        sql = """
+        SELECT COUNT(*) AS n
+        FROM "KCMH_HIS"."OVST" o
+        JOIN "KCMH_HIS"."PT" p ON o."hn" = p."hn"
+        WHERE o."vstdate" >= '2024-01-01'
+        """
+        validate_sql(sql, catalog=tracking_catalog, validate_joins=True)
+
+        # The OVST<->PT real-table join MUST still be sent for validation
+        assert tracking_catalog.validate_join.called, (
+            "Real-table joins must still be validated against the catalog"
+        )
+
+
 class TestConvenienceFunctions:
     """Test convenience functions for catalog integration."""
 

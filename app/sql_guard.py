@@ -435,6 +435,7 @@ class ExtractedJoin:
 def _extract_joins(
     parsed: exp.Expression,
     table_aliases: dict[str, str],
+    cte_names: set[str] | None = None,
 ) -> list[ExtractedJoin]:
     """
     Extract all explicit joins from parsed SQL.
@@ -443,21 +444,27 @@ def _extract_joins(
     - JOIN ... ON table1.col = table2.col
     - WHERE table1.col = table2.col (implicit joins)
 
+    Joins where either side resolves to a CTE name are skipped, since
+    CTEs are user-defined inside the query and have no entry in the
+    schema catalog (validating them always returns 'heuristic' and
+    produces spurious low-confidence warnings).
+
     Returns list of ExtractedJoin with resolved table names (not aliases).
     """
     joins: list[ExtractedJoin] = []
+    cte_names = cte_names or set()
 
     # Find explicit JOIN conditions
     for join_expr in parsed.find_all(exp.Join):
         on_clause = join_expr.args.get("on")
         if on_clause:
-            _extract_eq_joins(on_clause, table_aliases, joins)
+            _extract_eq_joins(on_clause, table_aliases, joins, cte_names)
 
     # Find implicit joins in WHERE clause
     for select in parsed.find_all(exp.Select):
         where_clause = select.args.get("where")
         if where_clause:
-            _extract_eq_joins(where_clause.this, table_aliases, joins)
+            _extract_eq_joins(where_clause.this, table_aliases, joins, cte_names)
 
     return joins
 
@@ -466,12 +473,14 @@ def _extract_eq_joins(
     expr: exp.Expression,
     table_aliases: dict[str, str],
     joins: list[ExtractedJoin],
+    cte_names: set[str],
 ) -> None:
     """
     Extract equality conditions that look like joins.
 
     Only captures table.col = table.col patterns where both sides
     have explicit table references and different tables.
+    Skips any join where either side resolves to a CTE name.
     """
     if isinstance(expr, exp.EQ):
         left = expr.left
@@ -488,8 +497,12 @@ def _extract_eq_joins(
                     right.table.upper(), right.table.upper()
                 )
 
+                # Skip joins involving CTE-defined "tables" - they aren't
+                # in the schema catalog so any validation is meaningless.
+                if left_table in cte_names or right_table in cte_names:
+                    pass
                 # Must be joining different tables
-                if left_table != right_table:
+                elif left_table != right_table:
                     joins.append(ExtractedJoin(
                         left_table=left_table,
                         left_column=left.name.lower(),
@@ -499,8 +512,8 @@ def _extract_eq_joins(
 
     # Recurse into AND conditions
     elif isinstance(expr, exp.And):
-        _extract_eq_joins(expr.left, table_aliases, joins)
-        _extract_eq_joins(expr.right, table_aliases, joins)
+        _extract_eq_joins(expr.left, table_aliases, joins, cte_names)
+        _extract_eq_joins(expr.right, table_aliases, joins, cte_names)
 
 
 def _validate_joins(
@@ -847,7 +860,9 @@ def validate_sql(
     # Layer 8: Join validation (confidence and warnings)
     join_warnings: list[JoinWarning] = []
     if catalog and validate_joins:
-        extracted_joins = _extract_joins(parsed, table_aliases)
+        extracted_joins = _extract_joins(
+            parsed, table_aliases, cte_names=_extract_cte_names(parsed)
+        )
         if extracted_joins:
             join_warnings = _validate_joins(extracted_joins, catalog)
             # Add readable warnings to the general warnings list (deduplicated)

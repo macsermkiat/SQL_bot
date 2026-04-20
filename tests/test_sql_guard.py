@@ -597,6 +597,46 @@ class TestCTEJoinValidation:
             "Real-table joins must still be validated against the catalog"
         )
 
+    def test_cte_name_collides_with_real_table_still_validates_real_join(
+        self, tracking_catalog
+    ):
+        """
+        Regression: a CTE named after a real catalog table (e.g. CTE `pt`
+        + real `KCMH_HIS.PT`) must NOT silence validation of the real-table
+        join. The collision is resolved by the column qualifier: `p.hn`
+        refers to the schema-qualified PT alias, not the CTE.
+        """
+        sql = """
+        WITH pt AS (
+            SELECT "hn" FROM "KCMH_HIS"."PTALLERGY"
+        )
+        SELECT COUNT(*) AS n
+        FROM "KCMH_HIS"."OVST" o
+        JOIN "KCMH_HIS"."PT" p ON o."hn" = p."hn"
+        WHERE o."vstdate" >= '2024-01-01'
+        """
+        validate_sql(sql, catalog=tracking_catalog, validate_joins=True)
+
+        # Real OVST<->PT join must still be sent for validation despite
+        # the CTE's name colliding with the real PT table.
+        calls = tracking_catalog.validate_join.call_args_list
+        assert calls, (
+            "Real-table join must still be validated when a CTE shares "
+            "the table's name"
+        )
+        tables_validated = {
+            (
+                call.kwargs.get("table_a", "").upper(),
+                call.kwargs.get("table_b", "").upper(),
+            )
+            for call in calls
+        }
+        assert ("OVST", "PT") in tables_validated or (
+            "PT", "OVST"
+        ) in tables_validated, (
+            f"Expected OVST<->PT join validated, got: {tables_validated}"
+        )
+
 
 class TestConvenienceFunctions:
     """Test convenience functions for catalog integration."""

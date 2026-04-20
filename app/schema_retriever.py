@@ -44,16 +44,7 @@ _TABLE_COMPONENT_EXPANSIONS: dict[str, list[str]] = {
     "med": ["medicine", "medication", "drug", "pharmaceutical"],
     "ward": ["ward", "bed", "room"],
     "diag": ["diagnosis", "diagnose", "disease"],
-    "oprt": [
-        "operation", "surgery", "procedure", "surgical",
-        # Common English procedure names so IPTSUMOPRT/PTOPRT are
-        # retrieved when the question uses a specific procedure term
-        # instead of the generic word "procedure".
-        "pci", "cabg", "angiography", "angioplasty",
-        "craniotomy", "colectomy", "appendectomy", "cholecystectomy",
-        "hysterectomy", "mastectomy", "laparotomy", "thoracotomy",
-        "endoscopy", "colonoscopy", "biopsy",
-    ],
+    "oprt": ["operation", "surgery", "procedure", "surgical"],
     "press": ["pressure", "blood pressure", "vital", "bp"],
     "allergy": ["allergy", "allergic", "adverse", "adr"],
     "arpt": ["billing", "charge", "payment", "fee", "income", "revenue"],

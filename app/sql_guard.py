@@ -185,20 +185,59 @@ def _extract_cte_names(parsed: exp.Expression) -> set[str]:
     return cte_names
 
 
+def _is_cte_reference(table: exp.Table, cte_names: set[str]) -> bool:
+    """
+    A Table expression refers to a CTE only when it is bare (no schema
+    qualifier) AND the bare name matches a CTE declared in the query.
+
+    Schema-qualified tables like `KCMH_HIS.PT` are always real catalog
+    tables, even when a CTE happens to share the name. Returning True
+    here means "treat this reference as the CTE"; False means "real
+    table".
+    """
+    if not table.name:
+        return False
+    if table.db:
+        return False
+    return table.name.upper() in cte_names
+
+
+def _extract_cte_aliases(
+    parsed: exp.Expression,
+    cte_names: set[str],
+) -> set[str]:
+    """
+    Collect the identifiers in the query (bare names and their aliases)
+    that actually reference a CTE, as opposed to identifiers that happen
+    to share a name with a declared CTE but resolve to a real table.
+
+    Only these identifiers should suppress catalog join validation.
+    """
+    cte_aliases: set[str] = set()
+    for table in parsed.find_all(exp.Table):
+        if not _is_cte_reference(table, cte_names):
+            continue
+        cte_aliases.add(table.name.upper())
+        if table.alias:
+            cte_aliases.add(table.alias.upper())
+    return cte_aliases
+
+
 def _extract_tables(parsed: exp.Expression) -> set[str]:
     """
-    Extract all table names from parsed SQL, excluding CTEs.
-    CTEs are temporary named result sets and should not be validated as real tables.
+    Extract all real table names from parsed SQL, excluding CTE references.
+    Schema-qualified tables are always included (a real `KCMH_HIS.PT` is
+    not suppressed even if a CTE named `pt` is also present).
     """
     tables = set()
     cte_names = _extract_cte_names(parsed)
 
     for table in parsed.find_all(exp.Table):
-        if table.name:
-            table_name = table.name.upper()
-            # Skip CTE names - they're not real tables
-            if table_name not in cte_names:
-                tables.add(table_name)
+        if not table.name:
+            continue
+        if _is_cte_reference(table, cte_names):
+            continue
+        tables.add(table.name.upper())
     return tables
 
 
@@ -435,6 +474,7 @@ class ExtractedJoin:
 def _extract_joins(
     parsed: exp.Expression,
     table_aliases: dict[str, str],
+    cte_aliases: set[str] | None = None,
 ) -> list[ExtractedJoin]:
     """
     Extract all explicit joins from parsed SQL.
@@ -443,21 +483,28 @@ def _extract_joins(
     - JOIN ... ON table1.col = table2.col
     - WHERE table1.col = table2.col (implicit joins)
 
+    Joins whose column qualifier refers to a CTE (tracked via
+    `cte_aliases`) are skipped, since CTEs are user-defined inside the
+    query and have no entry in the schema catalog. Identifiers that
+    happen to share a name with a CTE but resolve to a real
+    (schema-qualified) table are still validated.
+
     Returns list of ExtractedJoin with resolved table names (not aliases).
     """
     joins: list[ExtractedJoin] = []
+    cte_aliases = cte_aliases or set()
 
     # Find explicit JOIN conditions
     for join_expr in parsed.find_all(exp.Join):
         on_clause = join_expr.args.get("on")
         if on_clause:
-            _extract_eq_joins(on_clause, table_aliases, joins)
+            _extract_eq_joins(on_clause, table_aliases, joins, cte_aliases)
 
     # Find implicit joins in WHERE clause
     for select in parsed.find_all(exp.Select):
         where_clause = select.args.get("where")
         if where_clause:
-            _extract_eq_joins(where_clause.this, table_aliases, joins)
+            _extract_eq_joins(where_clause.this, table_aliases, joins, cte_aliases)
 
     return joins
 
@@ -466,12 +513,17 @@ def _extract_eq_joins(
     expr: exp.Expression,
     table_aliases: dict[str, str],
     joins: list[ExtractedJoin],
+    cte_aliases: set[str],
 ) -> None:
     """
     Extract equality conditions that look like joins.
 
     Only captures table.col = table.col patterns where both sides
     have explicit table references and different tables.
+    Skips joins whose ORIGINAL column qualifier refers to a CTE
+    (identifiers present in `cte_aliases`); does NOT skip when the
+    resolved table name happens to collide with a CTE but the
+    qualifier itself points at a real schema-qualified table.
     """
     if isinstance(expr, exp.EQ):
         left = expr.left
@@ -481,12 +533,18 @@ def _extract_eq_joins(
         if isinstance(left, exp.Column) and isinstance(right, exp.Column):
             # Both must have table qualifiers
             if left.table and right.table:
-                left_table = table_aliases.get(
-                    left.table.upper(), left.table.upper()
-                )
-                right_table = table_aliases.get(
-                    right.table.upper(), right.table.upper()
-                )
+                left_qual = left.table.upper()
+                right_qual = right.table.upper()
+
+                # Skip joins whose column qualifier refers to a CTE.
+                # Checking the original qualifier (not the resolved name)
+                # prevents false-negatives where a CTE name collides with
+                # a real catalog table referenced via a different alias.
+                if left_qual in cte_aliases or right_qual in cte_aliases:
+                    return
+
+                left_table = table_aliases.get(left_qual, left_qual)
+                right_table = table_aliases.get(right_qual, right_qual)
 
                 # Must be joining different tables
                 if left_table != right_table:
@@ -499,8 +557,8 @@ def _extract_eq_joins(
 
     # Recurse into AND conditions
     elif isinstance(expr, exp.And):
-        _extract_eq_joins(expr.left, table_aliases, joins)
-        _extract_eq_joins(expr.right, table_aliases, joins)
+        _extract_eq_joins(expr.left, table_aliases, joins, cte_aliases)
+        _extract_eq_joins(expr.right, table_aliases, joins, cte_aliases)
 
 
 def _validate_joins(
@@ -766,28 +824,37 @@ def validate_sql(
         # Extract CTEs to exclude from catalog validation
         cte_names = _extract_cte_names(parsed)
 
-        # Use resolved columns (with aliases mapped to real tables) for validation
-        # Exclude CTE names since they're temporary named result sets, not real tables
+        # Use resolved columns (with aliases mapped to real tables) for validation.
+        # Exclude CTE names since they're temporary named result sets, not real
+        # tables. A CTE name that also exists as a real catalog table (shadowing)
+        # is kept, so real-table column references are still validated.
         columns_for_validation: dict[str, list[str]] = {}
         for table, cols in all_columns_resolved.items():
-            if table not in ("_UNKNOWN_", "_STAR_") and table.upper() not in cte_names:
-                table_obj = catalog.get_table(table)
-                if strict_catalog_check:
-                    # In strict mode, include ALL columns so unknown ones get caught
-                    columns_for_validation[table.upper()] = cols
-                elif table_obj:
-                    # Non-strict: filter to known columns to avoid false positives
-                    # from CTE-generated aliases or nested subqueries
-                    valid_cols = [c for c in cols if c.lower() in table_obj.columns]
-                    if valid_cols:
-                        columns_for_validation[table.upper()] = valid_cols
-                else:
-                    # Table not in catalog - include all columns for validation
-                    columns_for_validation[table.upper()] = cols
+            if table in ("_UNKNOWN_", "_STAR_"):
+                continue
+            if table.upper() in cte_names and not catalog.table_exists(table):
+                continue
+            table_obj = catalog.get_table(table)
+            if strict_catalog_check:
+                # In strict mode, include ALL columns so unknown ones get caught
+                columns_for_validation[table.upper()] = cols
+            elif table_obj:
+                # Non-strict: filter to known columns to avoid false positives
+                # from CTE-generated aliases or nested subqueries
+                valid_cols = [c for c in cols if c.lower() in table_obj.columns]
+                if valid_cols:
+                    columns_for_validation[table.upper()] = valid_cols
+            else:
+                # Table not in catalog - include all columns for validation
+                columns_for_validation[table.upper()] = cols
 
         if strict_catalog_check:
-            # Filter out CTEs from tables to validate
-            real_tables = [t for t in tables_used if t not in cte_names]
+            # Filter out CTEs from tables to validate, but keep real-table
+            # references that happen to share a CTE name.
+            real_tables = [
+                t for t in tables_used
+                if t not in cte_names or catalog.table_exists(t)
+            ]
 
             invalid_tables, invalid_cols = catalog.validate_sql_references(
                 tables=real_tables,
@@ -847,7 +914,13 @@ def validate_sql(
     # Layer 8: Join validation (confidence and warnings)
     join_warnings: list[JoinWarning] = []
     if catalog and validate_joins:
-        extracted_joins = _extract_joins(parsed, table_aliases)
+        extracted_joins = _extract_joins(
+            parsed,
+            table_aliases,
+            cte_aliases=_extract_cte_aliases(
+                parsed, _extract_cte_names(parsed)
+            ),
+        )
         if extracted_joins:
             join_warnings = _validate_joins(extracted_joins, catalog)
             # Add readable warnings to the general warnings list (deduplicated)

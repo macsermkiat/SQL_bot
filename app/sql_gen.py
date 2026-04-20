@@ -22,7 +22,14 @@ from app.llm import get_llm_client
 from app.models import SQLGenerationResponse, TokenUsage
 
 
-# Core tables always included (rest discovered dynamically by retriever)
+# Core tables always included (rest discovered dynamically by retriever).
+#
+# Keep this list small and limited to universal-key tables that every
+# reasonable analytical query needs to know about. Reference masters
+# (WARD, DCT, CLINICLCT, ICD9CM, etc.) and procedure tables should be
+# surfaced by the question-aware retriever, not hard-coded here; adding
+# them globally wastes prompt real estate on unrelated queries and only
+# papers over retrieval gaps instead of fixing them.
 PRIORITY_TABLES: list[str] = [
     "OVST",       # Outpatient visits
     "IPT",        # Inpatient admissions
@@ -30,18 +37,13 @@ PRIORITY_TABLES: list[str] = [
     "PTDIAG",     # Outpatient diagnoses
     "IPTSUMDIAG", # Inpatient diagnoses
     "ICD10",      # ICD-10 codes
-    "ICD9CM",     # ICD-9-CM procedure codes
     "PRSC",       # Prescription header
     "PRSCDT",     # Prescription details
     "MEDITEMDIS", # Drug master
     "LVST",       # Lab visit
     "LVSTEXM",    # Lab results
     "LABEXM",     # Lab exam master
-    "PTICD9CM",   # ICD-9-CM procedures (OPD+IPD)
-    "IPTSUMOPRT", # Inpatient procedures (ICD-9-CM)
-    "CLINICLCT",  # Clinic/location master (ER, OPD, departments)
-    "WARD",       # Ward master (length of stay, bed family)
-    "DCT",        # Doctor master (physician lookups)
+    "PTICD9CM",   # ICD-9-CM procedures (OPD+IPD, preferred over IPTSUMOPRT)
 ]
 
 

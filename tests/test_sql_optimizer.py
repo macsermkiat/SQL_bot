@@ -49,6 +49,28 @@ class TestAnalyzeLeaf:
         assert info.date_alias == "lv"
         assert info.is_simple_scan is True
 
+    def test_leaf_without_schema_is_supported(self) -> None:
+        body = """SELECT "labno", "hn"
+    FROM "LVST" lv
+    WHERE lv."lvstdate" >= '2024-01-01'
+      AND lv."lvstdate" < '2025-01-01'"""
+        info = _analyze_leaf(body)
+        assert info is not None
+        assert info.schema_name is None
+        assert info.base_table == "LVST"
+        assert info.table_alias == "lv"
+
+    def test_leaf_with_as_alias_is_supported(self) -> None:
+        body = """SELECT lv."labno", lv."hn"
+    FROM "KCMH_HIS"."LVST" AS lv
+    WHERE lv."lvstdate" >= '2024-01-01'
+      AND lv."lvstdate" < '2025-01-01'"""
+        info = _analyze_leaf(body)
+        assert info is not None
+        assert info.schema_name == "KCMH_HIS"
+        assert info.base_table == "LVST"
+        assert info.table_alias == "lv"
+
     def test_leaf_with_distinct(self) -> None:
         body = """SELECT DISTINCT "hn"
     FROM "KCMH_HIS"."PTDIAG"
@@ -215,6 +237,27 @@ class TestOptimizeFlatten:
         # Original WHERE conditions preserved
         assert "result" in result
         assert "IS NOT NULL" in result
+
+    def test_flatten_preserves_non_default_schema(self) -> None:
+        sql = """WITH
+            lvst_2024 AS (
+                SELECT "labno", "hn"
+                FROM "ALT_SCHEMA"."LVST"
+                WHERE "lvstdate" >= '2024-01-01'
+                  AND "lvstdate" < '2025-01-01'
+            ),
+            results AS (
+                SELECT l24."hn"
+                FROM lvst_2024 l24
+                INNER JOIN "ALT_SCHEMA"."LVSTEXM" lexm ON l24."labno" = lexm."labno"
+                WHERE lexm."result" IS NOT NULL
+            )
+        SELECT COUNT(*) FROM results"""
+
+        result = optimize_query(sql)
+        assert result is not None
+        assert '"ALT_SCHEMA"."LVST"' in result
+        assert "lvst_2024 AS" not in result
 
     def test_users_exact_query_flattened(self) -> None:
         """Test the exact query pattern causing the user's timeout."""

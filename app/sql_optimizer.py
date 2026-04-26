@@ -64,7 +64,10 @@ _SQL_KEYWORDS = frozenset({
     "UNION", "EXCEPT", "INTERSECT", "AS", "SET", "INTO", "VALUES",
 })
 _FROM_TABLE_RE = re.compile(
-    r'FROM\s+"KCMH_HIS"\s*\.\s*"(\w+)"(?:\s+(\w+))?',
+    r"FROM\s+"
+    r'(?:("?\w+"?)\s*\.\s*)?'  # optional schema (group 1)
+    r'("?\w+"?)'  # table (group 2)
+    r"(?:\s+(?:AS\s+)?(\w+))?",  # optional alias (group 3)
     re.IGNORECASE,
 )
 
@@ -84,6 +87,7 @@ _SELECT_RE = re.compile(
 class _LeafInfo:
     """Metadata extracted from a leaf CTE for optimization."""
 
+    schema_name: str | None  # e.g. "KCMH_HIS"
     base_table: str  # e.g. "LVST"
     table_alias: str | None  # e.g. "lv" or None
     date_col: str  # e.g. "lvstdate"
@@ -107,9 +111,13 @@ def _analyze_leaf(body: str) -> _LeafInfo | None:
         return None
 
     # Filter out SQL keywords captured as alias
-    table_alias = table_m.group(2)
+    table_alias = table_m.group(3)
     if table_alias and table_alias.upper() in _SQL_KEYWORDS:
         table_alias = None
+    schema_name = table_m.group(1)
+    if schema_name:
+        schema_name = schema_name.strip('"')
+    base_table = table_m.group(2).strip('"')
 
     date_m = _DATE_RANGE_RE.search(body)
     if not date_m:
@@ -136,7 +144,8 @@ def _analyze_leaf(body: str) -> _LeafInfo | None:
     )
 
     return _LeafInfo(
-        base_table=table_m.group(1),
+        schema_name=schema_name,
+        base_table=base_table,
         table_alias=table_alias,
         date_col=date_m.group(2),
         date_alias=date_m.group(1),  # alias prefix on date column
@@ -184,7 +193,11 @@ def _flatten_from_reference(
         alias = leaf_info.base_table.lower()[:3]
 
     # Replace FROM clause with actual base table
-    new_from = f'FROM "KCMH_HIS"."{leaf_info.base_table}" {alias}'
+    if leaf_info.schema_name:
+        table_ref = f'"{leaf_info.schema_name}"."{leaf_info.base_table}"'
+    else:
+        table_ref = f'"{leaf_info.base_table}"'
+    new_from = f"FROM {table_ref} {alias}"
     new_body = downstream_body[: m.start()] + new_from + downstream_body[m.end() :]
 
     # Build date conditions with the downstream alias
@@ -407,7 +420,8 @@ def _rebuild_sql(ctes: list[ParsedCTE], final_query: str) -> str:
             cte_parts.append(f"{cte.name} ({col_str}) AS (\n    {cte.body}\n  )")
         else:
             cte_parts.append(f"{cte.name} AS (\n    {cte.body}\n  )")
-    return f'WITH\n  {",\n  ".join(cte_parts)}\n{final_query}'
+    joined_ctes = ",\n  ".join(cte_parts)
+    return f"WITH\n  {joined_ctes}\n{final_query}"
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +442,7 @@ def is_large_table_scan(body: str) -> bool:
     """Check if the CTE body scans a known large table."""
     m = _FROM_TABLE_RE.search(body)
     if m:
-        return m.group(1) in _LARGE_TABLES
+        return m.group(2).strip('"') in _LARGE_TABLES
     return False
 
 

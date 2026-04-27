@@ -127,6 +127,36 @@ class Learning:
 
 
 @dataclass
+class ExecutionResult:
+    """Actual DB execution comparison between gold SQL and generated SQL."""
+
+    ticket_id: str
+    gen_row_count: int | None
+    gen_error: str | None
+    gen_exec_time_ms: float
+    gold_row_count: int | None
+    gold_error: str | None
+    gold_exec_time_ms: float
+    gold_sql_transpiled: str | None = None
+
+    @property
+    def both_succeeded(self) -> bool:
+        return self.gen_error is None and self.gold_error is None
+
+    @property
+    def rowcount_match(self) -> bool:
+        if not self.both_succeeded:
+            return False
+        return self.gen_row_count == self.gold_row_count
+
+    @property
+    def rowcount_ratio(self) -> float | None:
+        if not self.both_succeeded or not self.gold_row_count:
+            return None
+        return self.gen_row_count / self.gold_row_count  # type: ignore[operator]
+
+
+@dataclass
 class PatchProposal:
     """A proposed patch to schema knowledge files."""
 

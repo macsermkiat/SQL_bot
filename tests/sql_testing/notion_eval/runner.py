@@ -4,6 +4,10 @@ Subcommands:
   fetch   -- show instructions for fetching Notion tickets via MCP
   eval    -- run SQL generation + diff against cached tickets
   watch   -- continuous mode: poll cache for new tickets, eval + patch + PR
+
+Flags:
+  --execute   Also run both SQLs against the live DB and compare rowcounts.
+              Requires VPN + DATABASE_URL set in .env (on user's machine).
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from tests.sql_testing.notion_eval.patcher import accumulate_patches, apply_patc
 from tests.sql_testing.notion_eval.report import print_summary, write_report
 from tests.sql_testing.notion_eval.scorer import score_results
 from tests.sql_testing.notion_eval.sql_diff import diff_sql
-from tests.sql_testing.notion_eval.ticket_models import EvalResult, TicketData
+from tests.sql_testing.notion_eval.ticket_models import EvalResult, ExecutionResult, TicketData
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,8 +64,13 @@ def _generate_sql(description: str) -> tuple[str | None, str | None, float]:
 # Core pipeline steps
 # ---------------------------------------------------------------------------
 
-def _eval_tickets(tickets: list[TicketData]) -> list[EvalResult]:
+def _eval_tickets(
+    tickets: list[TicketData],
+    execute: bool = False,
+) -> tuple[list[EvalResult], list[ExecutionResult]]:
     results: list[EvalResult] = []
+    exec_results: list[ExecutionResult] = []
+
     for i, ticket in enumerate(tickets, 1):
         logger.info(
             "[%d/%d] %s — %s",
@@ -92,7 +101,34 @@ def _eval_tickets(tickets: list[TicketData]) -> list[EvalResult]:
             generation_time_ms=elapsed_ms,
         ))
 
-    return results
+        if execute and gen_sql and not error:
+            try:
+                from tests.sql_testing.notion_eval.sql_executor import execute_both
+                exec_result = execute_both(ticket, gen_sql)
+                exec_results.append(exec_result)
+            except Exception as exc:
+                logger.error("execute_both failed for %s: %s", ticket.id[:8], exc)
+
+    return results, exec_results
+
+
+def _print_execution_summary(exec_results: list[ExecutionResult]) -> None:
+    if not exec_results:
+        return
+    matched = sum(1 for r in exec_results if r.rowcount_match)
+    both_ok = sum(1 for r in exec_results if r.both_succeeded)
+    print("\n  --- Live DB execution ---")
+    print(f"  Executed : {len(exec_results)}")
+    print(f"  Both OK  : {both_ok}")
+    print(f"  Rowcount match : {matched} / {both_ok}")
+    print(f"\n  {'#':<6} {'Match':<6} {'Gen rows':>9} {'Gold rows':>10}  Title")
+    print("  " + "-" * 55)
+    for r in exec_results:
+        ticket_num = r.ticket_id[:6]
+        match = "YES" if r.rowcount_match else ("ERR" if not r.both_succeeded else "NO")
+        gen = str(r.gen_row_count) if r.gen_error is None else "ERR"
+        gold = str(r.gold_row_count) if r.gold_error is None else "ERR"
+        print(f"  {ticket_num:<6} {match:<6} {gen:>9} {gold:>10}")
 
 
 def _run_full_pipeline(
@@ -101,13 +137,17 @@ def _run_full_pipeline(
     dry_run: bool = True,
     auto_pr: bool = False,
     min_support: int = 2,
+    execute: bool = False,
 ) -> Path:
     run_id = "run_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     logger.info("Run ID: %s", run_id)
 
-    results = _eval_tickets(tickets)
+    results, exec_results = _eval_tickets(tickets, execute=execute)
     summary = score_results(results)
     print_summary(summary, results)
+
+    if execute:
+        _print_execution_summary(exec_results)
 
     all_learnings = []
     for r in results:
@@ -126,7 +166,7 @@ def _run_full_pipeline(
     else:
         logger.info("Dry-run mode — patches NOT written. Pass --apply to apply.")
 
-    report_path = write_report(run_id, summary, results, proposals)
+    report_path = write_report(run_id, summary, results, proposals, exec_results=exec_results)
     logger.info("Report saved: %s", report_path)
     return report_path
 
@@ -144,9 +184,7 @@ def _create_pr(run_id: str, n_patches: int, n_tickets: int) -> None:
             ],
             check=True,
         )
-        msg = (
-            f"feat: auto-training patches from {n_tickets} Notion tickets ({run_id})"
-        )
+        msg = f"feat: auto-training patches from {n_tickets} Notion tickets ({run_id})"
         subprocess.run(["git", "commit", "-m", msg], check=True)
         subprocess.run(["git", "push", "-u", "origin", "HEAD"], check=True)
         body = (
@@ -185,6 +223,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("eval", help="Run evaluation on cached tickets")
     e.add_argument(
+        "--execute", action="store_true",
+        help="Execute both SQLs on live DB and compare rowcounts (requires VPN + DATABASE_URL)",
+    )
+    e.add_argument(
         "--apply", action="store_true",
         help="Apply qualifying patches to schema files",
     )
@@ -214,6 +256,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--interval", type=int, default=3600,
         help="Poll interval in seconds (default: 3600)",
     )
+    w.add_argument("--execute", action="store_true")
     w.add_argument("--auto-pr", action="store_true")
     w.add_argument("--min-support", type=int, default=2)
 
@@ -244,6 +287,7 @@ def main() -> None:
             dry_run=args.dry_run,
             auto_pr=args.auto_pr,
             min_support=args.min_support,
+            execute=args.execute,
         )
 
     elif args.cmd == "watch":
@@ -263,6 +307,7 @@ def main() -> None:
                     dry_run=False,
                     auto_pr=args.auto_pr,
                     min_support=args.min_support,
+                    execute=args.execute,
                 )
                 seen_ids.update(t.id for t in new_tickets)
             else:

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tests.sql_testing.notion_eval.scorer import RunSummary, grade
-from tests.sql_testing.notion_eval.ticket_models import EvalResult, PatchProposal
+from tests.sql_testing.notion_eval.ticket_models import EvalResult, ExecutionResult, PatchProposal
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +65,15 @@ def write_report(
     results: list[EvalResult],
     patches: list[PatchProposal],
     output_dir: Path | None = None,
+    exec_results: list[ExecutionResult] | None = None,
 ) -> Path:
     """Write a JSON report to disk. Returns the path written."""
     out_dir = (output_dir or _RESULTS_ROOT) / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / "notion_eval_report.json"
+
+    exec_results = exec_results or []
+    matched = sum(1 for r in exec_results if r.rowcount_match)
 
     payload = {
         "run_id": run_id,
@@ -92,8 +96,13 @@ def write_report(
         },
         "patches_proposed": len(patches),
         "patches_applied": sum(1 for p in patches if p.applied),
+        "execution": {
+            "ran": len(exec_results),
+            "rowcount_matched": matched,
+        } if exec_results else None,
         "results": [_result_to_dict(r) for r in results],
         "patch_proposals": [_patch_to_dict(p) for p in patches],
+        "execution_results": [_exec_result_to_dict(r) for r in exec_results],
     }
 
     with open(report_path, "w", encoding="utf-8") as f:
@@ -127,6 +136,20 @@ def _result_to_dict(r: EvalResult) -> dict:
             "parse_error": r.diff.parse_error,
         }
     return d
+
+
+def _exec_result_to_dict(r: ExecutionResult) -> dict:
+    return {
+        "ticket_id": r.ticket_id,
+        "gen_row_count": r.gen_row_count,
+        "gen_error": r.gen_error,
+        "gen_exec_time_ms": round(r.gen_exec_time_ms, 1),
+        "gold_row_count": r.gold_row_count,
+        "gold_error": r.gold_error,
+        "gold_exec_time_ms": round(r.gold_exec_time_ms, 1),
+        "rowcount_match": r.rowcount_match,
+        "rowcount_ratio": round(r.rowcount_ratio, 4) if r.rowcount_ratio is not None else None,
+    }
 
 
 def _patch_to_dict(p: PatchProposal) -> dict:

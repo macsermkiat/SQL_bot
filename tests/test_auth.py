@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.auth import UserStore, create_session_token, decode_session_token
+from app.config import DEFAULT_SECRET_KEY, Settings
 from app.models import UserInfo
 
 
@@ -184,6 +185,29 @@ class TestSessionToken:
     def test_empty_token_returns_none(self):
         result = decode_session_token("")
         assert result is None
+
+
+class TestRuntimeSecretValidation:
+    """Production must not accept the development signing key."""
+
+    def test_production_rejects_default_secret(self):
+        settings = Settings(
+            anthropic_api_key="test-key",
+            app_env="production",
+            secret_key=DEFAULT_SECRET_KEY,
+        )
+
+        with pytest.raises(RuntimeError, match="SECRET_KEY"):
+            settings.validate_runtime_safety()
+
+    def test_production_accepts_strong_secret(self):
+        settings = Settings(
+            anthropic_api_key="test-key",
+            app_env="production",
+            secret_key="x" * 32,
+        )
+
+        settings.validate_runtime_safety()
 
 
 class TestSuperUsersFileEdgeCases:

@@ -26,6 +26,7 @@ from app.config import get_settings
 from app.db import CancellableQuery, get_db
 from app.models import ChatRequest, ChatResponse, UserInfo
 from app.rate_limit import get_login_limiter
+from app.session import SessionOwnershipError, get_session_manager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     logger.info("Starting KCMH SQL Bot...")
     settings = get_settings()
+    settings.validate_runtime_safety()
     logger.info("Using model: %s", settings.claude_model)
 
     # Pre-load user store
@@ -162,6 +164,7 @@ async def login(request: Request, email: str = Form(...), password: str = Form(.
         max_age=settings.session_max_age,
         httponly=True,
         samesite="lax",
+        secure=settings.secure_cookies or settings.app_env == "production",
     )
     return response
 
@@ -313,7 +316,10 @@ async def chat(request: ChatRequest, user: UserInfo = Depends(require_auth)):
     """Handle chat message and return response."""
     try:
         orchestrator = get_orchestrator()
-        response = await orchestrator.handle_message(request)
+        response = await orchestrator.handle_message(
+            request,
+            user_email=user.email,
+        )
 
         # Strip sensitive fields for standard users
         if user.role != "super_user":
@@ -322,6 +328,8 @@ async def chat(request: ChatRequest, user: UserInfo = Depends(require_auth)):
             response.sanity_checks = []
 
         return response
+    except SessionOwnershipError:
+        raise HTTPException(status_code=403, detail="Forbidden")
     except Exception as e:
         logger.exception("Chat error for user %s", user.email)
         raise HTTPException(status_code=500, detail=str(e))
@@ -333,6 +341,14 @@ async def chat_stream(
     user: UserInfo = Depends(require_auth),
 ):
     """Handle chat message with streaming progress events (SSE)."""
+    try:
+        get_session_manager().assert_session_owner(
+            request.session_id,
+            user.email,
+        )
+    except SessionOwnershipError:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     orchestrator = get_orchestrator()
     cancellable = CancellableQuery(get_db())
 

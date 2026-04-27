@@ -13,6 +13,9 @@ from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_SECRET_KEY = "change-me-to-a-random-string-at-least-32-chars"
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -85,9 +88,17 @@ class Settings(BaseSettings):
     )
 
     # Authentication settings
+    app_env: Literal["development", "test", "production"] = Field(
+        default="development",
+        description="Runtime environment. Production enforces stricter safety checks.",
+    )
     secret_key: str = Field(
-        default="change-me-to-a-random-string-at-least-32-chars",
+        default=DEFAULT_SECRET_KEY,
         description="Secret key for signing session cookies",
+    )
+    secure_cookies: bool = Field(
+        default=False,
+        description="Set Secure on session cookies. Enable when serving over HTTPS.",
     )
     session_cookie_name: str = Field(
         default="kcmh_session",
@@ -177,6 +188,17 @@ class Settings(BaseSettings):
     @property
     def static_dir(self) -> Path:
         return self.base_dir / "app" / "static"
+
+    def validate_runtime_safety(self) -> None:
+        """Fail fast on unsafe production configuration."""
+        if self.app_env != "production":
+            return
+
+        if self.secret_key == DEFAULT_SECRET_KEY or len(self.secret_key) < 32:
+            raise RuntimeError(
+                "SECRET_KEY must be set to a unique value of at least 32 "
+                "characters when APP_ENV=production."
+            )
 
 
 @lru_cache

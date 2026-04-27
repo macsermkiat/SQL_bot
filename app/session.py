@@ -11,6 +11,10 @@ from typing import Any
 from app.models import Message, Session
 
 
+class SessionOwnershipError(Exception):
+    """Raised when a user tries to reuse another user's chat session."""
+
+
 class SessionManager:
     """Manages chat sessions in memory."""
 
@@ -18,10 +22,17 @@ class SessionManager:
         self._sessions: dict[str, Session] = {}
         self._session_ttl = timedelta(hours=session_ttl_hours)
 
-    def create_session(self) -> Session:
+    @staticmethod
+    def _normalize_owner(owner_email: str | None) -> str | None:
+        return owner_email.strip().lower() if owner_email else None
+
+    def create_session(self, owner_email: str | None = None) -> Session:
         """Create a new session."""
         session_id = str(uuid.uuid4())
-        session = Session(session_id=session_id)
+        session = Session(
+            session_id=session_id,
+            owner_email=self._normalize_owner(owner_email),
+        )
         self._sessions[session_id] = session
         return session
 
@@ -38,26 +49,57 @@ class SessionManager:
 
         return session
 
-    def get_or_create_session(self, session_id: str | None) -> Session:
+    def _assert_owner(
+        self,
+        session: Session,
+        owner_email: str | None,
+    ) -> None:
+        owner = self._normalize_owner(owner_email)
+        if session.owner_email is None:
+            session.owner_email = owner
+            return
+        if owner is not None and session.owner_email != owner:
+            raise SessionOwnershipError("Chat session belongs to another user")
+
+    def assert_session_owner(
+        self,
+        session_id: str | None,
+        owner_email: str | None,
+    ) -> None:
+        """Validate ownership for an existing session without creating one."""
+        if not session_id:
+            return
+        session = self.get_session(session_id)
+        if session is not None:
+            self._assert_owner(session, owner_email)
+
+    def get_or_create_session(
+        self,
+        session_id: str | None,
+        owner_email: str | None = None,
+    ) -> Session:
         """Get existing session or create new one."""
         if session_id:
             session = self.get_session(session_id)
             if session:
+                self._assert_owner(session, owner_email)
                 return session
 
-        return self.create_session()
+        return self.create_session(owner_email=owner_email)
 
     def add_message(
         self,
         session_id: str,
         role: str,
         content: str,
+        owner_email: str | None = None,
         **metadata: Any,
     ) -> Message | None:
         """Add message to session."""
         session = self.get_session(session_id)
         if session is None:
             return None
+        self._assert_owner(session, owner_email)
 
         return session.add_message(role, content, **metadata)
 
@@ -65,11 +107,13 @@ class SessionManager:
         self,
         session_id: str,
         max_messages: int = 10,
+        owner_email: str | None = None,
     ) -> list[dict[str, str]]:
         """Get conversation history for LLM context."""
         session = self.get_session(session_id)
         if session is None:
             return []
+        self._assert_owner(session, owner_email)
 
         messages = session.messages[-max_messages:]
         return [

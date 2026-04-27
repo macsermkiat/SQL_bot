@@ -169,6 +169,7 @@ def get_user_store() -> UserStore:
 def _get_serializer() -> URLSafeTimedSerializer:
     """Get the session cookie serializer."""
     settings = get_settings()
+    settings.validate_runtime_safety()
     return URLSafeTimedSerializer(settings.secret_key)
 
 

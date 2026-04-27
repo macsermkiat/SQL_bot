@@ -757,13 +757,25 @@ def validate_sql(
 
     # Layer 2: Parse SQL
     try:
-        parsed = sqlglot.parse_one(sql, dialect="postgres")
+        parsed_statements = [
+            stmt for stmt in sqlglot.parse(sql, dialect="postgres")
+            if stmt is not None
+        ]
     except ParseError as e:
         return ValidationResult(
             valid=False,
             error=f"SQL parse error: {e}",
             error_type="SQLParseError",
         )
+
+    if len(parsed_statements) != 1:
+        return ValidationResult(
+            valid=False,
+            error="Exactly one SQL statement is allowed.",
+            error_type="ForbiddenStatementError",
+        )
+
+    parsed = parsed_statements[0]
 
     # Layer 3: Statement type - only SELECT allowed
     is_valid_select = False

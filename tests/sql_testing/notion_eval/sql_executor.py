@@ -2,14 +2,15 @@
 
 Requires DB connectivity (VPN + SSH tunnel on user's machine).
 Gold SQL is transpiled from Oracle/SQL Server to PostgreSQL via sqlglot
-before execution. Both SQLs are wrapped in SELECT COUNT(*) FROM (...) so
-we compare true result-set sizes, not raw row fetches.
+before execution. Both SQLs pass through sql_guard before being wrapped
+in SELECT COUNT(*) FROM (...) to get true result-set sizes.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 
 try:
     import sqlglot
@@ -60,26 +61,46 @@ def _transpile_to_postgres(sql: str, dialect: str) -> tuple[str, str | None]:
         return clean, str(exc)
 
 
+def _guard_sql(sql: str, label: str) -> str | None:
+    """Run sql through app.sql_guard. Returns error string or None if safe."""
+    try:
+        from app.sql_guard import validate_sql
+        result = validate_sql(sql)
+        if not result.is_valid:
+            return f"guard_blocked: {result.error}"
+        return None
+    except ImportError:
+        # Fallback when running outside app context: minimal SELECT/WITH check
+        stripped = sql.strip().upper().lstrip("(")
+        if not (stripped.startswith("SELECT") or stripped.startswith("WITH")):
+            return f"guard_blocked: not a SELECT/CTE statement"
+        return None
+    except Exception as exc:
+        return f"guard_error: {exc}"
+
+
 def _wrap_count(sql: str) -> str:
-    """Wrap any SQL in SELECT COUNT(*) FROM (...) to get true result-set size."""
+    """Wrap any SELECT in COUNT(*) to get true result-set size."""
     stripped = sql.strip().rstrip(";")
     return f"SELECT COUNT(*) AS _total FROM ({stripped}) AS _subq"
 
 
-def _run_count(db, sql: str, timeout_ms: int) -> tuple[int | None, str | None, float]:
-    """Execute a count-wrapped SQL. Returns (count, error, exec_ms)."""
+def _run_count(db: object, sql: str, timeout_ms: int) -> tuple[int | None, str | None, float]:
+    """Validate, wrap in COUNT(*), execute. Returns (count, error, exec_ms)."""
+    guard_err = _guard_sql(sql, "sql")
+    if guard_err:
+        return None, guard_err, 0.0
+
     count_sql = _wrap_count(sql)
+    t0 = time.monotonic()
     try:
-        result = db.execute_query(count_sql, timeout_ms=timeout_ms, max_rows=1)
-        exec_ms = result.execution_time_ms
-        # result.rows is [[n]] when using dict_row → list conversion
-        if result.rows:
-            count = result.rows[0][0]
-        else:
-            count = 0
-        return int(count), None, exec_ms
+        result = db.execute_query(count_sql, timeout_ms=timeout_ms, max_rows=1)  # type: ignore[attr-defined]
+        exec_ms = (time.monotonic() - t0) * 1000
+        count = int(result.rows[0][0]) if result.rows else 0
+        return count, None, exec_ms
     except Exception as exc:
-        return None, str(exc), 0.0
+        exec_ms = (time.monotonic() - t0) * 1000
+        return None, str(exc), exec_ms
 
 
 def execute_both(
@@ -89,8 +110,8 @@ def execute_both(
 ) -> ExecutionResult:
     """Run generated SQL and transpiled gold SQL against the live DB.
 
-    Both are wrapped in SELECT COUNT(*) FROM (...) so the comparison is
-    true result-set size, not a capped fetch count.
+    Both are guarded (sql_guard) then wrapped in SELECT COUNT(*) FROM (...)
+    so the comparison is true result-set size.
 
     Requires `app.db` to be reachable (VPN + correct DATABASE_URL in .env).
     """
@@ -99,14 +120,12 @@ def execute_both(
 
     label = ticket.ticket_number or ticket.id[:8]
 
-    # --- generated SQL ---
     gen_row_count, gen_error, gen_exec_ms = _run_count(db, gen_sql, timeout_ms)
     if gen_error:
         logger.warning("gen SQL failed for %s: %s", label, gen_error)
     else:
         logger.debug("gen SQL OK: %d rows in %.0fms", gen_row_count, gen_exec_ms)
 
-    # --- gold SQL (transpile to PostgreSQL first) ---
     gold_pg_sql, transpile_error = _transpile_to_postgres(ticket.gold_sql, ticket.gold_sql_dialect)
     if transpile_error:
         logger.warning("Transpile warning for %s: %s", label, transpile_error)

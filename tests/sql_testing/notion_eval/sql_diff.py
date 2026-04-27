@@ -63,13 +63,13 @@ def _extract_joins(tree: "exp.Expression") -> list[tuple[str, str]]:
         if isinstance(node, exp.Join):
             on_clause = node.args.get("on")
             if on_clause:
-                cols = [
-                    c.sql(dialect="postgres").upper()
-                    for c in on_clause.walk()
-                    if isinstance(c, exp.Column)
-                ]
-                if len(cols) >= 2:
-                    joins.append((cols[0], cols[1]))
+                for eq in on_clause.find_all(exp.EQ):
+                    left = eq.left if hasattr(eq, "left") else eq.args.get("this")
+                    right = eq.right if hasattr(eq, "right") else eq.args.get("expression")
+                    if isinstance(left, exp.Column) and isinstance(right, exp.Column):
+                        a = left.sql(dialect="postgres").upper()
+                        b = right.sql(dialect="postgres").upper()
+                        joins.append(tuple(sorted((a, b))))  # type: ignore[arg-type]
     return joins
 
 

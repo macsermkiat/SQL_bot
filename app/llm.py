@@ -8,9 +8,49 @@ import json
 from typing import Any
 
 import anthropic
+import openai
 
 from app.config import get_settings
 from app.models import SQLGenerationResponse, TokenUsage
+
+
+# Beta header required for the advisor tool.
+ADVISOR_BETA_HEADER = "advisor-tool-2026-03-01"
+ADVISOR_TOOL_TYPE = "advisor_20260301"
+
+# Prepended to the system prompt when the Anthropic advisor tool is enabled.
+# Adapted from the official guidance at
+# https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/advisor-tool
+ADVISOR_SYSTEM_GUIDANCE = """You have access to an `advisor` tool backed by a stronger reviewer model (Opus). \
+It takes NO parameters — when you call advisor(), your entire conversation history is automatically forwarded. \
+The advisor sees the question, schema context, concepts, and every prior reasoning step.
+
+Call advisor BEFORE writing the final SQL — before committing to a table choice, join pattern, or filter \
+interpretation. Orientation (reading schema, thinking about which concepts apply) is not substantive work. \
+Writing the SQL and declaring done ARE substantive work.
+
+Also call advisor:
+- When the question is ambiguous and a wrong concept mapping would produce a silently-wrong answer.
+- When the required join path spans 3+ tables or involves header/detail relationships.
+- When you are uncertain which ICD/drug/lab code pattern matches the user's intent.
+
+Give the advice serious weight. If you follow a step and it conflicts with a schema constraint you can verify \
+(column does not exist, PHI block, type mismatch), adapt — but surface the conflict to the advisor on a second \
+call rather than silently switching.
+
+The advisor should respond in under 100 words, using enumerated steps, not explanations.
+
+"""
+
+# Template prepended to system prompt when Codex (OpenAI) advisor guidance is injected.
+CODEX_ADVISOR_GUIDANCE_HEADER = """## CODEX ADVISOR GUIDANCE (from OpenAI {model})
+An external OpenAI model reviewed this task before you. Follow the numbered steps below closely.
+If any step conflicts with a verified schema constraint, adapt and note the deviation.
+
+{guidance}
+
+---
+"""
 
 
 class LLMClient:
@@ -20,6 +60,12 @@ class LLMClient:
         settings = get_settings()
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         self._model = settings.claude_model
+        self._settings = settings
+        self._openai_client: openai.OpenAI | None = (
+            openai.OpenAI(api_key=settings.openai_api_key)
+            if settings.openai_api_key
+            else None
+        )
 
     def generate_sql(
         self,
@@ -28,6 +74,7 @@ class LLMClient:
         concepts_context: str,
         conversation_history: list[dict[str, str]] | None = None,
         extended_thinking: bool = False,
+        use_advisor: bool = False,
     ) -> tuple[SQLGenerationResponse, TokenUsage]:
         """
         Generate SQL from natural language question.
@@ -38,11 +85,27 @@ class LLMClient:
             concepts_context: Clinical concept definitions
             conversation_history: Previous messages for context
             extended_thinking: Enable extended thinking for harder reasoning
+            use_advisor: If True, use the advisor tool (beta) so the executor
+                can consult a stronger advisor model mid-generation.
+                Mutually exclusive with extended_thinking.
 
         Returns:
             Tuple of (SQLGenerationResponse, TokenUsage)
         """
         system_prompt = self._build_system_prompt(schema_context, concepts_context)
+
+        if use_advisor and self._settings.advisor_backend == "codex":
+            guidance = self._call_codex_advisor(schema_context, concepts_context, user_question)
+            system_prompt = (
+                CODEX_ADVISOR_GUIDANCE_HEADER.format(
+                    model=self._settings.codex_model,
+                    guidance=guidance,
+                )
+                + system_prompt
+            )
+        elif use_advisor:
+            system_prompt = ADVISOR_SYSTEM_GUIDANCE + system_prompt
+
         messages = self._build_messages(user_question, conversation_history)
 
         kwargs: dict[str, Any] = {
@@ -52,37 +115,132 @@ class LLMClient:
             "messages": messages,
         }
 
-        if extended_thinking:
+        if extended_thinking and not use_advisor:
             kwargs["thinking"] = {
                 "type": "enabled",
                 "budget_tokens": 10000,
             }
 
-        try:
-            response = self._client.messages.create(**kwargs)
-        except Exception:
-            if extended_thinking:
-                # Fall back without extended thinking
-                kwargs.pop("thinking", None)
-                kwargs["max_tokens"] = 4096
+        if use_advisor and self._settings.advisor_backend == "anthropic":
+            response = self._create_with_advisor(kwargs)
+        else:
+            try:
                 response = self._client.messages.create(**kwargs)
-            else:
-                raise
+            except Exception:
+                if extended_thinking:
+                    # Fall back without extended thinking
+                    kwargs.pop("thinking", None)
+                    kwargs["max_tokens"] = 4096
+                    response = self._client.messages.create(**kwargs)
+                else:
+                    raise
 
-        usage = TokenUsage(
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-            total_tokens=response.usage.input_tokens + response.usage.output_tokens,
-        )
-
-        # Extract text content (skip thinking blocks when extended thinking is used)
-        text_content = ""
-        for block in response.content:
-            if block.type == "text":
-                text_content = block.text
-                break
-
+        usage = self._extract_usage(response)
+        text_content = self._extract_final_text(response.content)
         return self._parse_response(text_content), usage
+
+    # ------------------------------------------------------------------
+    # Advisor helpers
+    # ------------------------------------------------------------------
+
+    def _create_with_advisor(self, kwargs: dict[str, Any]) -> Any:
+        """Invoke the beta messages endpoint with the advisor tool declared."""
+        kwargs = {
+            **kwargs,
+            "betas": [ADVISOR_BETA_HEADER],
+            "tools": [
+                {
+                    "type": ADVISOR_TOOL_TYPE,
+                    "name": "advisor",
+                    "model": self._settings.advisor_model,
+                    "max_uses": self._settings.advisor_max_uses,
+                }
+            ],
+        }
+        return self._client.beta.messages.create(**kwargs)
+
+    def _call_codex_advisor(
+        self,
+        schema_context: str,
+        concepts_context: str,
+        user_question: str,
+    ) -> str:
+        """Call OpenAI Codex (GPT-5.5) for pre-generation advisory guidance.
+
+        Returns enumerated steps (≤100 words) that are injected into Claude's
+        system prompt before SQL generation begins.
+        """
+        if self._openai_client is None:
+            raise ValueError(
+                "advisor_backend='codex' requires OPENAI_API_KEY to be set in .env"
+            )
+
+        advisor_prompt = f"""You are a SQL review advisor for KCMH hospital information system (PostgreSQL).
+
+Analyse this SQL generation task and respond with numbered steps only (max 100 words).
+
+Question: {user_question}
+
+Schema summary (truncated):
+{schema_context[:2500]}
+
+Clinical concepts available:
+{concepts_context[:500]}
+
+Advise on:
+1. Most likely correct tables and join path
+2. PHI columns to exclude from SELECT output (hn, cid, fname, lname, dob, etc.)
+3. Key ambiguities and safe assumptions
+4. ICD/drug/lab code patterns if relevant
+
+Numbered steps only. No explanations. Under 100 words."""
+
+        response = self._openai_client.responses.create(
+            model=self._settings.codex_model,
+            input=advisor_prompt,
+        )
+        return response.output_text
+
+    @staticmethod
+    def _extract_final_text(content_blocks: list[Any]) -> str:
+        """Return the last text block's text (where the final JSON lives).
+
+        With the advisor tool, the executor may emit an intermediate text
+        block ("Let me consult the advisor..."), then a server_tool_use +
+        advisor_tool_result pair, then the final answer in another text
+        block. The final SQL/JSON is in the last text block.
+        """
+        last_text = ""
+        for block in content_blocks:
+            if getattr(block, "type", None) == "text":
+                last_text = getattr(block, "text", "") or last_text
+        return last_text
+
+    @staticmethod
+    def _extract_usage(response: Any) -> TokenUsage:
+        """Build TokenUsage, splitting executor and advisor sub-inference."""
+        usage = response.usage
+        input_tokens = getattr(usage, "input_tokens", 0) or 0
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
+
+        advisor_in = 0
+        advisor_out = 0
+        iterations = getattr(usage, "iterations", None) or []
+        for it in iterations:
+            # iterations entries may be dicts or objects
+            it_type = it.get("type") if isinstance(it, dict) else getattr(it, "type", None)
+            if it_type == "advisor_message":
+                get = it.get if isinstance(it, dict) else lambda k, _d=it: getattr(_d, k, 0)
+                advisor_in += get("input_tokens", 0) or 0
+                advisor_out += get("output_tokens", 0) or 0
+
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            advisor_input_tokens=advisor_in,
+            advisor_output_tokens=advisor_out,
+        )
 
     def _build_system_prompt(self, schema_context: str, concepts_context: str) -> str:
         """Build the system prompt with schema and concept context.

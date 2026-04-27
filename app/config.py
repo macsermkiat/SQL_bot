@@ -7,6 +7,8 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -27,7 +29,34 @@ class Settings(BaseSettings):
     )
     claude_model: str = Field(
         default="claude-sonnet-4-6",
-        description="Claude model to use",
+        description="Claude model to use (the executor model)",
+    )
+
+    # Advisor tool (beta: advisor-tool-2026-03-01) — pairs the executor
+    # with a stronger advisor model for strategic mid-generation guidance.
+    advisor_enabled: bool = Field(
+        default=False,
+        description="Enable the advisor tool for SQL generation",
+    )
+    advisor_model: str = Field(
+        default="claude-opus-4-6",
+        description="Advisor model ID (must be >= executor in capability)",
+    )
+    advisor_max_uses: int = Field(
+        default=2,
+        description="Max advisor calls per SQL generation request",
+    )
+    advisor_backend: Literal["anthropic", "codex"] = Field(
+        default="anthropic",
+        description="Advisor backend: 'anthropic' uses Claude Opus beta tool, 'codex' uses OpenAI GPT-5.5",
+    )
+    openai_api_key: str | None = Field(
+        default=None,
+        description="OpenAI API key (required when advisor_backend='codex')",
+    )
+    codex_model: str = Field(
+        default="gpt-5.5",
+        description="OpenAI model to use as Codex advisor",
     )
 
     # Database settings

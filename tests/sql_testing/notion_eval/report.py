@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 from datetime import datetime, timezone
@@ -108,7 +109,10 @@ def write_report(
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2, default=_json_default)
 
+    csv_path = _write_comparison_csv(out_dir, results, exec_results)
+
     logger.info("Report written to %s", report_path)
+    logger.info("Comparison CSV: %s", csv_path)
     return report_path
 
 
@@ -162,6 +166,53 @@ def _patch_to_dict(p: PatchProposal) -> dict:
         "applied": p.applied,
         "affected_tickets": p.affected_tickets[:10],
     }
+
+
+def _write_comparison_csv(
+    out_dir: Path,
+    results: list[EvalResult],
+    exec_results: list[ExecutionResult],
+) -> Path:
+    csv_path = out_dir / "comparison.csv"
+    exec_by_id = {r.ticket_id: r for r in exec_results}
+
+    fieldnames = [
+        "ticket_number", "title", "department", "description_thai",
+        "grade", "score",
+        "gen_rows", "gold_rows", "rowcount_match",
+        "missing_tables", "missing_joins", "missing_filters",
+        "gold_sql", "generated_sql", "gen_error",
+        "notes",
+    ]
+
+    with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for r in results:
+            ex = exec_by_id.get(r.ticket.id)
+            diff = r.diff
+
+            writer.writerow({
+                "ticket_number": r.ticket.ticket_number or r.ticket.id[:8],
+                "title": r.ticket.title,
+                "department": r.ticket.department,
+                "description_thai": r.ticket.description_thai,
+                "grade": grade(r),
+                "score": round(r.score, 4),
+                "gen_rows": ex.gen_row_count if ex else "",
+                "gold_rows": ex.gold_row_count if ex else "",
+                "rowcount_match": ex.rowcount_match if ex else "",
+                "missing_tables": ", ".join(sorted(diff.missing_tables)) if diff else "",
+                "missing_joins": "; ".join(f"{a}={b}" for a, b in diff.missing_joins) if diff else "",
+                "missing_filters": "; ".join(diff.missing_filters[:5]) if diff else "",
+                "gold_sql": r.ticket.gold_sql,
+                "generated_sql": r.generated_sql or "",
+                "gen_error": r.generation_error or (ex.gen_error if ex else "") or "",
+                "notes": "",
+            })
+
+    return csv_path
 
 
 def _json_default(obj: object) -> object:

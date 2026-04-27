@@ -437,19 +437,44 @@ class LearningStore:
 
     # --- Graduation: JSONL -> YAML ---
 
+    @staticmethod
+    def _graduation_entry_id(pattern: LearnedPattern) -> str:
+        """Stable review ID used before a learned pattern can enter YAML."""
+        table_slug = "_".join(t.lower() for t in pattern.tables[:3])
+        error_slug = re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            pattern.error_summary.lower()[:40],
+        ).strip("_")
+        return f"{table_slug}_{error_slug}"
+
     def graduate_patterns(
         self,
         min_hits: int = _GRADUATION_MIN_HITS,
+        reviewed_ids: set[str] | list[str] | tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         """Graduate proven JSONL patterns into YAML corrections file.
+
+        Graduation is intentionally manual: a pattern must meet the hit
+        threshold AND its stable review ID must be provided in
+        ``reviewed_ids``. This keeps production-specific or unlucky
+        one-off fixes from becoming global prompt rules.
 
         Returns list of graduated entries.
         """
         self._ensure_loaded()
 
+        reviewed = set(reviewed_ids or [])
+        if not reviewed:
+            return []
+
         candidates = [
             p for p in self._patterns
-            if p.hit_count >= min_hits and not p.graduated
+            if (
+                p.hit_count >= min_hits
+                and not p.graduated
+                and self._graduation_entry_id(p) in reviewed
+            )
         ]
 
         if not candidates:
@@ -466,10 +491,7 @@ class LearningStore:
 
         graduated: list[dict[str, Any]] = []
         for p in candidates:
-            # Generate a stable ID from tables + error
-            table_slug = "_".join(t.lower() for t in p.tables[:3])
-            error_slug = re.sub(r"[^a-z0-9]+", "_", p.error_summary.lower()[:40]).strip("_")
-            entry_id = f"{table_slug}_{error_slug}"
+            entry_id = self._graduation_entry_id(p)
 
             # Avoid duplicates
             if entry_id in existing_yaml:
@@ -503,7 +525,11 @@ class LearningStore:
             # Mark as graduated in JSONL
             with self._lock:
                 for i, p in enumerate(self._patterns):
-                    if p.hit_count >= min_hits and not p.graduated:
+                    if (
+                        p.hit_count >= min_hits
+                        and not p.graduated
+                        and self._graduation_entry_id(p) in reviewed
+                    ):
                         self._patterns[i] = LearnedPattern(
                             **{**asdict(p), "graduated": True},
                         )
@@ -607,11 +633,24 @@ def _cli() -> None:
             idx = sys.argv.index("--min-hits")
             min_hits = int(sys.argv[idx + 1])
 
-        graduated = store.graduate_patterns(min_hits=min_hits)
+        reviewed_ids: set[str] = set()
+        for i, arg in enumerate(sys.argv):
+            if arg == "--reviewed-id" and i + 1 < len(sys.argv):
+                reviewed_ids.add(sys.argv[i + 1])
+
+        graduated = store.graduate_patterns(
+            min_hits=min_hits,
+            reviewed_ids=reviewed_ids,
+        )
         if graduated:
             print(f"Graduated {len(graduated)} patterns to sql_corrections.yaml:")
             for g in graduated:
                 print(f"  - {g['id']}: {g['reason']}")
+        elif not reviewed_ids:
+            print(
+                "No patterns graduated. Review candidates first, then pass "
+                "--reviewed-id <id> for each approved correction."
+            )
         else:
             print("No patterns ready for graduation "
                   f"(need >= {min_hits} hits, not already graduated)")

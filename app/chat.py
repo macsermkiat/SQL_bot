@@ -67,7 +67,11 @@ class ChatOrchestrator:
             self._catalog = get_schema_catalog()
         return self._catalog
 
-    async def handle_message(self, request: ChatRequest) -> ChatResponse:
+    async def handle_message(
+        self,
+        request: ChatRequest,
+        user_email: str | None = None,
+    ) -> ChatResponse:
         """
         Handle a user message and return a response.
 
@@ -78,7 +82,10 @@ class ChatOrchestrator:
             ChatResponse with answer, SQL, and metadata
         """
         session_manager = get_session_manager()
-        session = session_manager.get_or_create_session(request.session_id)
+        session = session_manager.get_or_create_session(
+            request.session_id,
+            owner_email=user_email,
+        )
 
         # Add user message to session
         session.add_message("user", request.message)
@@ -87,6 +94,7 @@ class ChatOrchestrator:
             response = await self._process_question(
                 question=request.message,
                 session_id=session.session_id,
+                user_email=user_email,
             )
         except Exception as e:
             logger.exception("Error processing question")
@@ -105,6 +113,7 @@ class ChatOrchestrator:
         self,
         question: str,
         session_id: str,
+        user_email: str | None = None,
     ) -> ChatResponse:
         """
         Process a user question through the full pipeline.
@@ -120,7 +129,11 @@ class ChatOrchestrator:
         generator = get_sql_generator()
 
         # Get conversation history for context
-        history = session_manager.get_conversation_history(session_id, max_messages=6)
+        history = session_manager.get_conversation_history(
+            session_id,
+            max_messages=6,
+            owner_email=user_email,
+        )
 
         # Token accumulator across all LLM calls
         total_usage = TokenUsage()
@@ -885,7 +898,10 @@ class ChatOrchestrator:
     ) -> AsyncGenerator[dict, None]:
         """Handle a message with streaming progress events."""
         session_manager = get_session_manager()
-        session = session_manager.get_or_create_session(request.session_id)
+        session = session_manager.get_or_create_session(
+            request.session_id,
+            owner_email=user_email,
+        )
         session.add_message("user", request.message)
 
         try:
@@ -961,7 +977,9 @@ class ChatOrchestrator:
         session_manager = get_session_manager()
         generator = get_sql_generator()
         history = session_manager.get_conversation_history(
-            session_id, max_messages=6,
+            session_id,
+            max_messages=6,
+            owner_email=user_email,
         )
 
         def _progress(step: str, message: str, pct: int) -> dict:

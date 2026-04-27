@@ -210,6 +210,25 @@ class TestSQLInjectionPrevention:
         result = validate_sql("SELECT COUNT(*) FROM ovst; DROP TABLE ovst")
         assert not result.valid
 
+    def test_second_select_statement_blocked(self):
+        """Only the exact validated statement may be executed."""
+        result = validate_sql(
+            "SELECT COUNT(*) FROM ovst; SELECT hn FROM pt LIMIT 10"
+        )
+        assert not result.valid
+        assert result.error_type == "ForbiddenStatementError"
+
+    def test_second_slow_statement_blocked(self):
+        """A safe first SELECT must not hide a second expensive statement."""
+        result = validate_sql("SELECT COUNT(*) FROM ovst; SELECT pg_sleep(10)")
+        assert not result.valid
+        assert result.error_type == "ForbiddenStatementError"
+
+    def test_trailing_semicolon_allowed(self):
+        """A single SELECT with a trailing semicolon is still one statement."""
+        result = validate_sql("SELECT COUNT(*) FROM ovst;")
+        assert result.valid
+
     def test_comment_injection_safe(self):
         """Comments in SQL should be handled safely."""
         # This should still be valid if it's just a SELECT

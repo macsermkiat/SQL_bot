@@ -130,6 +130,7 @@ class Session(BaseModel):
     """Chat session with history."""
 
     session_id: str
+    owner_email: str | None = None
     messages: list[Message] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)
     last_activity: datetime = Field(default_factory=datetime.now)

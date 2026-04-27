@@ -37,3 +37,6 @@ uv.lock
 task_plan.md
 findings.md
 progress.md
+
+# Notion eval ticket cache (contains Thai clinical context)
+test_data/notion_eval/

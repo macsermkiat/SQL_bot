@@ -93,11 +93,18 @@ class SanityCheckResult(BaseModel):
 
 
 class TokenUsage(BaseModel):
-    """Token usage from LLM API calls."""
+    """Token usage from LLM API calls.
+
+    Executor tokens (input/output/total) are billed at the executor model's
+    rates. When the advisor tool is used, advisor sub-inference tokens are
+    tracked separately because they're billed at the advisor model's rates.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    advisor_input_tokens: int = 0
+    advisor_output_tokens: int = 0
 
 
 class ChatResponse(BaseModel):

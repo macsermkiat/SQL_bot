@@ -447,6 +447,7 @@ class SQLGenerator:
         question: str,
         conversation_history: list[dict[str, str]] | None = None,
         extended_thinking: bool = False,
+        use_advisor: bool | None = None,
     ) -> tuple[SQLGenerationResponse, TokenUsage]:
         """
         Generate SQL from natural language question.
@@ -455,12 +456,19 @@ class SQLGenerator:
             question: User's analytical question
             conversation_history: Previous conversation for context
             extended_thinking: Enable extended thinking for harder reasoning
+            use_advisor: Override settings.advisor_enabled. If None, uses
+                the configured default.
 
         Returns:
             Tuple of (SQLGenerationResponse, TokenUsage)
         """
         # Build question-aware schema context (dynamic per question)
         schema_context = self.build_schema_context_for_question(question)
+
+        settings = get_settings()
+        advisor_flag = (
+            settings.advisor_enabled if use_advisor is None else use_advisor
+        )
 
         client = get_llm_client()
         return client.generate_sql(
@@ -469,6 +477,7 @@ class SQLGenerator:
             concepts_context=self.concepts_context,
             conversation_history=conversation_history,
             extended_thinking=extended_thinking,
+            use_advisor=advisor_flag,
         )
 
     def get_join_recommendation(self, tables: list[str]) -> str:

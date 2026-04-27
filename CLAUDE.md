@@ -52,6 +52,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
 - **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
+## Environment Constraints (IMPORTANT for Claude)
+
+- **No direct database access from this working environment.** The KCMH HIS
+  PostgreSQL DB lives inside the hospital intranet, reachable only via SSH
+  over a VPN the user holds on their own machine. Any command that tries to
+  hit the DB (psycopg, psql, `uv run python -c "from app.db import ..."`
+  with a real connection) **will fail** from this sandbox. Do NOT try to
+  "verify" by connecting.
+- **Use dry-run validation instead.** The SQL testing pipeline
+  (`tests/sql_testing/`) is built on sqlglot static validation + schema
+  catalog lookup and does NOT require the DB. Prefer it for any SQL
+  evaluation work (including the advisor A/B runner).
+- **The user runs real SQL against the DB manually**, on their own machine
+  behind the VPN. When reporting results, trust their logs rather than
+  attempting a connection yourself.
+- **API access is fine.** Anthropic API calls work from this environment
+  provided `ANTHROPIC_API_KEY` is set in `.env` (the default line is
+  commented out — ask or uncomment before running anything that hits the
+  API).
+
 ## Project Overview
 
 **KCMH SQL Bot** — a read-only analytics chatbot for querying the King Chulalongkorn Memorial Hospital (KCMH) HIS database.

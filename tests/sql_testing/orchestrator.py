@@ -72,6 +72,7 @@ class SQLTestOrchestrator:
         questions_path: Path | None = None,
         results_dir: Path | None = None,
         catalog: SchemaCatalog | None = None,
+        use_advisor: bool = False,
     ) -> None:
         """
         Initialize orchestrator.
@@ -80,10 +81,14 @@ class SQLTestOrchestrator:
             questions_path: Path to questions JSON file
             results_dir: Directory for test results
             catalog: Schema catalog for validation
+            use_advisor: If True, SQL generation consults the Opus advisor
+                tool mid-generation. Used for A/B comparing the advisor
+                strategy against baseline.
         """
         self._questions_path = questions_path or QUESTIONS_DIR / "base_questions.json"
         self._results_dir = results_dir or RESULTS_DIR
         self._catalog = catalog
+        self._use_advisor = use_advisor
         self._evaluator: SQLEvaluator | None = None
 
     @property
@@ -137,7 +142,10 @@ class SQLTestOrchestrator:
             from app.sql_gen import get_sql_generator
 
             generator = get_sql_generator()
-            response = generator.generate(question.text)
+            response, token_usage = generator.generate(
+                question.text,
+                use_advisor=self._use_advisor,
+            )
 
             elapsed_ms = (time.time() - start_time) * 1000
 

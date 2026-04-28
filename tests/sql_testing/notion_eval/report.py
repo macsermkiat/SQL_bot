@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tests.sql_testing.notion_eval.scorer import RunSummary, grade
-from tests.sql_testing.notion_eval.ticket_models import EvalResult, ExecutionResult, PatchProposal
+from tests.sql_testing.notion_eval.ticket_models import EvalResult, PatchProposal
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,6 @@ _RESULTS_ROOT = (
     / "sql_testing"
     / "results"
 )
-
-
-def _run_id() -> str:
-    return "run_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
 def print_summary(summary: RunSummary, results: list[EvalResult]) -> None:
@@ -66,15 +62,11 @@ def write_report(
     results: list[EvalResult],
     patches: list[PatchProposal],
     output_dir: Path | None = None,
-    exec_results: list[ExecutionResult] | None = None,
 ) -> Path:
-    """Write a JSON report to disk. Returns the path written."""
+    """Write a JSON report and comparison CSV to disk. Returns the report path."""
     out_dir = (output_dir or _RESULTS_ROOT) / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / "notion_eval_report.json"
-
-    exec_results = exec_results or []
-    matched = sum(1 for r in exec_results if r.rowcount_match)
 
     payload = {
         "run_id": run_id,
@@ -96,20 +88,14 @@ def write_report(
             },
         },
         "patches_proposed": len(patches),
-        "patches_applied": sum(1 for p in patches if p.applied),
-        "execution": {
-            "ran": len(exec_results),
-            "rowcount_matched": matched,
-        } if exec_results else None,
         "results": [_result_to_dict(r) for r in results],
         "patch_proposals": [_patch_to_dict(p) for p in patches],
-        "execution_results": [_exec_result_to_dict(r) for r in exec_results],
     }
 
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2, default=_json_default)
 
-    csv_path = _write_comparison_csv(out_dir, results, exec_results)
+    csv_path = _write_comparison_csv(out_dir, results)
 
     logger.info("Report written to %s", report_path)
     logger.info("Comparison CSV: %s", csv_path)
@@ -142,20 +128,6 @@ def _result_to_dict(r: EvalResult) -> dict:
     return d
 
 
-def _exec_result_to_dict(r: ExecutionResult) -> dict:
-    return {
-        "ticket_id": r.ticket_id,
-        "gen_row_count": r.gen_row_count,
-        "gen_error": r.gen_error,
-        "gen_exec_time_ms": round(r.gen_exec_time_ms, 1),
-        "gold_row_count": r.gold_row_count,
-        "gold_error": r.gold_error,
-        "gold_exec_time_ms": round(r.gold_exec_time_ms, 1),
-        "rowcount_match": r.rowcount_match,
-        "rowcount_ratio": round(r.rowcount_ratio, 4) if r.rowcount_ratio is not None else None,
-    }
-
-
 def _patch_to_dict(p: PatchProposal) -> dict:
     return {
         "patch_id": p.patch_id,
@@ -163,23 +135,16 @@ def _patch_to_dict(p: PatchProposal) -> dict:
         "target_file": p.target_file,
         "patch_type": p.patch_type,
         "support_count": p.support_count,
-        "applied": p.applied,
         "affected_tickets": p.affected_tickets[:10],
     }
 
 
-def _write_comparison_csv(
-    out_dir: Path,
-    results: list[EvalResult],
-    exec_results: list[ExecutionResult],
-) -> Path:
+def _write_comparison_csv(out_dir: Path, results: list[EvalResult]) -> Path:
     csv_path = out_dir / "comparison.csv"
-    exec_by_id = {r.ticket_id: r for r in exec_results}
 
     fieldnames = [
         "ticket_number", "title", "department", "description_thai",
         "grade", "score",
-        "gen_rows", "gold_rows", "rowcount_match",
         "missing_tables", "missing_joins", "missing_filters",
         "gold_sql", "generated_sql", "gen_error",
         "notes",
@@ -190,9 +155,7 @@ def _write_comparison_csv(
         writer.writeheader()
 
         for r in results:
-            ex = exec_by_id.get(r.ticket.id)
             diff = r.diff
-
             writer.writerow({
                 "ticket_number": r.ticket.ticket_number or r.ticket.id[:8],
                 "title": r.ticket.title,
@@ -200,15 +163,12 @@ def _write_comparison_csv(
                 "description_thai": r.ticket.description_thai,
                 "grade": grade(r),
                 "score": round(r.score, 4),
-                "gen_rows": ex.gen_row_count if ex else "",
-                "gold_rows": ex.gold_row_count if ex else "",
-                "rowcount_match": ex.rowcount_match if ex else "",
                 "missing_tables": ", ".join(sorted(diff.missing_tables)) if diff else "",
                 "missing_joins": "; ".join(f"{a}={b}" for a, b in diff.missing_joins) if diff else "",
                 "missing_filters": "; ".join(diff.missing_filters[:5]) if diff else "",
                 "gold_sql": r.ticket.gold_sql,
                 "generated_sql": r.generated_sql or "",
-                "gen_error": r.generation_error or (ex.gen_error if ex else "") or "",
+                "gen_error": r.generation_error or "",
                 "notes": "",
             })
 

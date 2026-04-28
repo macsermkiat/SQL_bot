@@ -60,7 +60,9 @@ def apply_patches(
     schema_root: Path = _SCHEMA_ROOT,
     dry_run: bool = False,
 ) -> list[PatchProposal]:
-    """Apply unapplied proposals to schema files. Returns list of applied proposals.
+    """DEPRECATED: not called by runner. Review proposals.yaml manually, then apply with care.
+
+    Apply unapplied proposals to schema files. Returns list of applied proposals.
 
     Raises RuntimeError if any patch fails, so the caller can abort auto-PR.
     """

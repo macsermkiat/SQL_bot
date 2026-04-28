@@ -1,4 +1,12 @@
-"""Load Notion tickets from local cache or live Notion MCP."""
+"""Load Notion tickets from local cache or live Notion MCP.
+
+Both Notion views share the same underlying collection:
+  collection://1f198331-76c8-80da-8634-000b89ff0491
+
+View URLs:
+  รับคำขอข้อมูล  : https://www.notion.so/2099833176c8804c8c60f774db18e826
+  การให้คำปรึกษา : https://www.notion.so/2099833176c88081b940de54e05febc8
+"""
 
 from __future__ import annotations
 

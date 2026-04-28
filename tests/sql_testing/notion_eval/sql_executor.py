@@ -1,4 +1,6 @@
-"""Execute gold and generated SQL against the live DB and compare results.
+"""DEPRECATED: not wired into the pipeline. Kept for reference only. Do not import.
+
+Original purpose: execute gold and generated SQL against the live DB and compare results.
 
 Requires DB connectivity (VPN + SSH tunnel on user's machine).
 Gold SQL is transpiled from Oracle/SQL Server to PostgreSQL via sqlglot

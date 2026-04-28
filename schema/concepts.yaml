@@ -179,6 +179,7 @@ surgery_inpatient:
     - PTOPRT: transactional procedure records with oprtact code and actual times (oprtdatein/oprtdateout). Join IPT via an. WARNING: PTOPRT.icd9cm is mostly EMPTY - do NOT rely on it for ICD-9-CM lookups.
     - OPREQVST: OR scheduling with optype (1=Elective, 2=Emergency), estmdate (surgery date). Join IPT via an.
     For OPD procedures, or if not sure if it's OPD or IPD, use PTICD9CM.icd9cm (can link with hn and an).
+    On PTICD9CM: AN IS NULL identifies OPD-context procedures; AN IS NOT NULL identifies IPD-context.
     CRITICAL: For ICD-9-CM procedure code lookups, ALWAYS use IPTSUMOPRT.icd9cm as primary source (NOT PTOPRT.icd9cm which is mostly empty). PTICD9CM can be used as supplementary.
     CRITICAL: icd9cm codes have NO dots. Use '470%' not '47.0%' for appendectomy.
     COMPREHENSIVE PROCEDURE QUERY PATTERN (best coverage):
@@ -443,3 +444,187 @@ drug_lookup_pattern:
     WRONG: PRSC.prscno = PRSCDT.prscno AND PRSC.prvno = PRSCDT.prvno
     RIGHT: PRSC.prscno = PRSCDT.prscno AND PRSC.sphmlct = PRSCDT.sphmlct
     prvno is an authorization reference, NOT a join key.
+
+medication_by_generic:
+  description: "Filter prescriptions by generic drug name (MEDGENERIC → MEDITEMGNR chain)"
+  tables:
+    - "MEDGENERIC"
+    - "MEDITEMGNR"
+    - "MEDITEMDIS"
+    - "PRSCDT"
+    - "PRSC"
+  notes: >
+    Use when the question groups drugs by generic name (ชื่อสามัญทางยา) rather than
+    by trade name or chemical name. Three reference tables form a chain:
+      MEDGENERIC (generic PK, name, name_en, name_th)   -- generic master
+        -> MEDITEMGNR (meditem, generic)                 -- bridge: items per generic
+        -> MEDITEMDIS (meditem, ...)                     -- the drug item used in PRSCDT
+    Pattern:
+    WITH gen AS (
+      SELECT DISTINCT mg.meditem
+      FROM MEDGENERIC g
+      INNER JOIN MEDITEMGNR mg ON mg.generic = g.generic
+      WHERE LOWER(g.name_en) LIKE '%<drug-generic>%'
+         OR g.name_th LIKE '%<drug-generic>%'
+    )
+    SELECT ... FROM PRSC p
+    INNER JOIN PRSCDT pd ON pd.prscno = p.prscno AND pd.sphmlct = p.sphmlct
+    INNER JOIN gen ON gen.meditem = pd.meditem
+    NEVER hardcode MEDGENERIC.generic integer codes — look them up by name/name_th.
+    Use MEDITEMDIS (chemname/tradename) when question refers to chemical or trade names.
+
+icd10_who_vs_internal:
+  description: "ICD10 table has two code columns — know which one to filter on"
+  tables:
+    - "ICD10"
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+  notes: >
+    The ICD10 reference table has two code columns:
+    - icd10    = internal storage code (PK; this is the FK used by PTDIAG/IPTSUMDIAG)
+    - icd10who = official WHO ICD-10 code that clinicians reference (e.g. 'E11', 'I50', 'J44')
+    Standard pattern when filtering by a clinician-named WHO code:
+      JOIN ICD10 i ON i.icd10 = d.icd10
+      WHERE i.icd10who LIKE 'E11%'
+    Do NOT assume PTDIAG.icd10 / IPTSUMDIAG.icd10 hold the WHO form directly —
+    internal codes may differ. Always JOIN ICD10 and filter on icd10who for WHO codes.
+
+diagnosis_type:
+  description: "Diagnosis significance/type lookup — principal, secondary, comorbidity"
+  tables:
+    - "DIAGTYPE"
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+  notes: >
+    PTDIAG.diagtype and IPTSUMDIAG.diagtype are NUMERIC codes whose labels
+    live in the DIAGTYPE reference table (columns: diagtype, name [Thai], name_en [English]).
+    Pattern: LEFT JOIN DIAGTYPE d ON d.diagtype = x.diagtype, then SELECT d.name or d.name_en.
+    Use when the question mentions principal/primary/secondary diagnosis or
+    "ความสำคัญของโรค" / "โรคหลัก" / "โรคร่วม".
+    Do NOT hardcode diagtype integer values — look them up by name.
+
+clinic_department_hierarchy:
+  description: "Filter by department or sub-department via CLINICLCT hierarchy"
+  tables:
+    - "CLINICLCT"
+  notes: >
+    CLINICLCT carries the full department hierarchy in-line:
+    - cliniclct   = clinic code (most granular, PK)
+    - subdeptlct + subdeptname = sub-department / division (e.g. GI division)
+    - deptlct + deptname       = department / faculty (e.g. Medicine, Pediatrics)
+    For "ภาควิชา X" / department-level questions, JOIN CLINICLCT and filter on
+    deptlct (numeric) or match deptname with LIKE — do NOT enumerate individual
+    cliniclct codes when a whole department is intended.
+    Pattern:
+      LEFT JOIN CLINICLCT c ON c.cliniclct = p.cliniclct
+      WHERE c.deptlct = (SELECT deptlct FROM CLINICLCT WHERE deptname LIKE '%Medicine%' LIMIT 1)
+      -- or: WHERE c.deptname LIKE '%อายุรศาสตร์%'
+    subdeptlct/subdeptname targets a single division within a department.
+
+tuberculosis_icd10:
+  description: "Tuberculosis (ICD-10 A15-A19, all forms)"
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+    - "ICD10"
+  notes: >
+    Tuberculosis spans ICD-10 A15-A19 (respiratory TB through unspecified TB).
+    Use the bracket-range LIKE pattern rather than enumerating 5 codes:
+      i."icd10who" LIKE 'A1[5-9]%'
+    Always JOIN ICD10 and filter on icd10who per icd10_who_vs_internal —
+    internal icd10 codes may differ from the WHO form.
+
+chronic_kidney_disease_icd10:
+  description: "Chronic kidney disease (ICD-10 N18)"
+  tables:
+    - "PTDIAG"
+    - "IPTSUMDIAG"
+    - "ICD10"
+  notes: >
+    CKD = ICD-10 N18 (LIKE 'N18%'). Do NOT include N17 — that is acute kidney
+    failure (AKI), a clinically distinct condition. End-stage renal disease is
+    N18.5/N18.6 specifically; "any CKD" should match N18% as a whole.
+    Use icd_lookup_pattern + icd10_who_vs_internal for the join shape.
+
+lab_test_categorization:
+  description: "Lab test group and specimen type reference tables"
+  tables:
+    - "LABGRP"
+    - "LABSPCM"
+    - "LVSTEXM"
+  notes: >
+    LABGRP: reference table for lab category/group.
+      Columns: labgrp (PK), name (Thai), name_en (English), labgrptype.
+      Join via LVSTEXM.labgrp = LABGRP.labgrp to get test category names.
+    LABSPCM: reference table for specimen types.
+      Columns: labspcm (PK), labgrp, name (Thai), name_en (English).
+      Join via LVSTEXM.labspcm = LABSPCM.labspcm to get specimen names.
+    Use when a question asks to group/filter lab tests by category (e.g.
+    "chemistry vs hematology") or by specimen type (e.g. "blood vs urine").
+    Pair with lab_result_lookup for the result values — this concept covers
+    category/specimen labels only.
+
+pathology_microbiology_culture:
+  description: "Bacteriology/microbiology culture results and organism identification"
+  tables:
+    - "LVSTEXMBAC1"
+    - "LABORGANISM_ITA"
+    - "LABORGANQTY_ITA"
+    - "LVSTEXM"
+  notes: >
+    LVSTEXMBAC1: bacteriology culture exam detail (per-organism row of a culture).
+      Key columns: labgrp, labexm, labno, seqno, organism, organqty, profile, finalflag.
+      Join to LVSTEXM on labno (labgrp/labexm can be added for disambiguation).
+    LABORGANISM_ITA: organism name reference.
+      Columns: organism (PK), name1/name2/name3 (Thai variants, with _flag fields).
+      No English-name column — all names are Thai.
+      Join via LVSTEXMBAC1.organism = LABORGANISM_ITA.organism.
+    LABORGANQTY_ITA: organism quantity/count description reference.
+      Columns: organqty (PK), qty1/qty2/qty3 (Thai variants).
+      Join via LVSTEXMBAC1.organqty = LABORGANQTY_ITA.organqty.
+    Use when a question involves culture results, organism identification,
+    antibiotic susceptibility, or microbiology growth reporting.
+
+ipd_ward_and_discharge_management:
+  description: "IPD ward assignment, ward transfers, and discharge disposition"
+  tables:
+    - "WARD"
+    - "IPTADM"
+    - "DCHST"
+    - "DCHTYPE"
+    - "IPT"
+  notes: >
+    WARD: ward/unit reference.
+      Columns: ward (PK), name (Thai), wardtype/wardtypename, building/buildingname,
+      subdeptlct/subdeptname, deptlct/deptname.
+      Join IPT.ward = WARD.ward to get ward names and department.
+    IPTADM: ward transfer / patient-movement records during an admission.
+      Key columns: an, ward, dct, indate, intime, outdate, outtime, rdaycnt.
+      No hn column — JOIN IPT via an to get hn.
+      Use IPTADM when the question asks about ward changes, transfers between
+      wards, or per-ward length of stay.
+    DCHST: discharge status reference (alive, died, AMA, etc.).
+      Columns: dchst (PK), name (Thai), name_en (English).
+      Join IPT.dchst = DCHST.dchst; do NOT hardcode integer values.
+    DCHTYPE: discharge type/destination reference.
+      Columns: dchtype (PK), name (Thai), name_en (English).
+      Join IPT.dchtype = DCHTYPE.dchtype.
+    Use for ward utilization, ward transfers, discharge outcomes, bed management.
+
+or_surgical_team:
+  description: "OR surgeon assignment via OPPROCEDUREDCT (multi-surgeon detail per case)"
+  tables:
+    - "OPREQVST"
+    - "OPPROCEDUREDCT"
+    - "DCT"
+  notes: >
+    OPPROCEDUREDCT: one row per assigned surgeon per OR case.
+      Verified columns: hn, reqdate, reqtime, itemno, dctorder, surgstf.
+      surgstf = surgeon code; dctorder = role/order of surgeon on the case.
+      Use when a case has multiple surgeons or you need surgical-team composition.
+    DCT: physician master.
+      Verified columns: dct (PK), prefix, fname, lname, prefix_en, fname_en,
+      lname_en, dcttype, dcttypename, deptlct, deptname, spclty, spcltyname.
+      No single full-name column — build as fname_en || ' ' || lname_en.
+      Join OPPROCEDUREDCT.surgstf = DCT.dct to get surgeon name/department.
+    For elective vs emergency counts use OPREQVST.optype (see surgery_inpatient).

@@ -49,3 +49,60 @@ procedure_pticd9cm_not_primary:
   reason: >
     IPTSUMOPRT is the medical records summary and the authoritative
     source for inpatient procedure codes. PTICD9CM can miss IPD entries.
+
+ovstpress_multi_condition_join:
+  tables: ["OVST", "OVSTPRESS"]
+  wrong: >
+    LEFT JOIN OVSTPRESS o2 ON o2.hn = o.hn
+    (joining blood pressure table on hn alone)
+  right: >
+    LEFT JOIN OVSTPRESS o2
+      ON o2.hn = o.hn
+     AND o2.vstdate = o.vstdate
+     AND o2.vsttime = o.vsttime
+     AND o2.cliniclct = o.cliniclct
+  reason: >
+    OVSTPRESS has no surrogate PK; multiple rows exist per vstdate across
+    different times and clinics. Joining on hn alone fan-outs OVST rows
+    and inflates counts. Always include vstdate + vsttime + cliniclct.
+
+lvstexm_self_join_panel_keys:
+  tables: ["LVSTEXM"]
+  wrong: >
+    LEFT JOIN LVSTEXM l2 ON l2.hn = l.hn AND l2.lvstdate = l.lvstdate
+    (self-join for lab panel pivot missing labgrp)
+  right: >
+    LEFT JOIN LVSTEXM l2
+      ON l2.hn = l.hn AND l2.lvstdate = l.lvstdate AND l2.labgrp = l.labgrp
+  reason: >
+    Must include labgrp to stay within one panel order. Without it, tests
+    from different panels on the same day bleed into each other. Add
+    lvsttime only as a tie-breaker for repeat panels on the same day.
+
+age_at_event_postgres:
+  tables: ["PT", "OVST", "PTDIAG", "IPT"]
+  wrong: >
+    TRUNC(MONTHS_BETWEEN(SYSDATE, t.brthdate)/12) AS age  -- Oracle only
+  right: >
+    DATE_PART('year', AGE(p.vstdate, t.brthdate))::int AS age_at_visit
+    -- For IPD use dchdate or rgtdate instead of vstdate
+  reason: >
+    Production DB is PostgreSQL. SYSDATE, MONTHS_BETWEEN, and TRUNC are
+    Oracle-only functions and will fail. Use AGE(event_date, brthdate)
+    with the appropriate event date: vstdate for OPD, dchdate or rgtdate
+    for IPD.
+
+opd_visit_filter_pattern:
+  tables: ["OVST"]
+  wrong: >
+    WHERE vstdate BETWEEN '2025-01-01' AND '2025-12-31'
+    (no cancellation or IPD-row exclusion)
+  right: >
+    WHERE vstdate BETWEEN '2025-01-01' AND '2025-12-31'
+      AND canceldate IS NULL
+      AND an IS NULL
+  reason: >
+    OVST contains both OPD visits and IPD admission registration rows.
+    canceldate IS NULL excludes cancelled visits (staff corrections).
+    AN IS NULL is required to filter OPD-only rows; rows with an non-NULL
+    are IPD admission records, not outpatient visits.

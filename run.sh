@@ -9,8 +9,28 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# Generate schema knowledge if not exists
-if [ ! -f out/schema_knowledge.json ]; then
+# Generate schema knowledge if missing or stale (any source CSV newer than the cache)
+schema_json="out/schema_knowledge.json"
+schema_sources=(
+    schema/frequent_table.csv
+    schema/frequent_column_enriched.csv
+    schema/join_edges.csv
+)
+
+needs_regen=0
+if [ ! -f "$schema_json" ]; then
+    needs_regen=1
+else
+    for src in "${schema_sources[@]}"; do
+        if [ -f "$src" ] && [ "$src" -nt "$schema_json" ]; then
+            needs_regen=1
+            echo "Schema source '$src' is newer than $schema_json — regenerating."
+            break
+        fi
+    done
+fi
+
+if [ "$needs_regen" -eq 1 ]; then
     echo "Generating schema knowledge from CSV files..."
     uv run python -c "from app.schema_parser import generate_schema_knowledge; generate_schema_knowledge()"
 fi

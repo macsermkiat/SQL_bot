@@ -31,7 +31,7 @@ class Settings(BaseSettings):
         description="Anthropic API key for Claude",
     )
     claude_model: str = Field(
-        default="claude-sonnet-4-6",
+        default="claude-sonnet-5",
         description="Claude model to use (the executor model)",
     )
 
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
         description="Enable the advisor tool for SQL generation",
     )
     advisor_model: str = Field(
-        default="claude-opus-4-6",
+        default="claude-opus-4-8",
         description="Advisor model ID (must be >= executor in capability)",
     )
     advisor_max_uses: int = Field(

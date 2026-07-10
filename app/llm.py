@@ -5,6 +5,7 @@ Claude API wrapper for SQL generation.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import anthropic
@@ -12,6 +13,9 @@ import openai
 
 from app.config import get_settings
 from app.models import SQLGenerationResponse, TokenUsage
+
+
+logger = logging.getLogger(__name__)
 
 
 # Beta header required for the advisor tool.
@@ -58,11 +62,15 @@ class LLMClient:
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self._client = anthropic.Anthropic(
+            api_key=settings.anthropic_api_key,
+            timeout=120.0,
+            max_retries=1,
+        )
         self._model = settings.claude_model
         self._settings = settings
         self._openai_client: openai.OpenAI | None = (
-            openai.OpenAI(api_key=settings.openai_api_key)
+            openai.OpenAI(api_key=settings.openai_api_key, timeout=60.0)
             if settings.openai_api_key
             else None
         )
@@ -110,27 +118,29 @@ class LLMClient:
 
         kwargs: dict[str, Any] = {
             "model": self._model,
-            "max_tokens": 16000 if extended_thinking else 4096,
+            "max_tokens": 16000 if extended_thinking else 8192,
             "system": system_prompt,
             "messages": messages,
         }
 
         if extended_thinking and not use_advisor:
-            kwargs["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": 10000,
-            }
+            kwargs["thinking"] = {"type": "adaptive"}
 
         if use_advisor and self._settings.advisor_backend == "anthropic":
             response = self._create_with_advisor(kwargs)
         else:
             try:
                 response = self._client.messages.create(**kwargs)
-            except Exception:
+            except Exception as exc:
                 if extended_thinking:
-                    # Fall back without extended thinking
-                    kwargs.pop("thinking", None)
-                    kwargs["max_tokens"] = 4096
+                    logger.warning(
+                        "Adaptive thinking failed for model %s; retrying with "
+                        "thinking disabled: %s",
+                        self._model,
+                        exc,
+                    )
+                    kwargs["thinking"] = {"type": "disabled"}
+                    kwargs["max_tokens"] = 8192
                     response = self._client.messages.create(**kwargs)
                 else:
                     raise
@@ -404,7 +414,8 @@ Keep it brief and professional.""",
 
         response = self._client.messages.create(
             model=self._model,
-            max_tokens=1024,
+            max_tokens=2048,
+            thinking={"type": "disabled"},
             messages=messages,
         )
 
@@ -414,7 +425,7 @@ Keep it brief and professional.""",
             total_tokens=response.usage.input_tokens + response.usage.output_tokens,
         )
 
-        return response.content[0].text, usage
+        return self._extract_final_text(response.content), usage
 
 
 # Global client instance

@@ -12,8 +12,8 @@ We test:
    blocks with server_tool_use and advisor_tool_result blocks.
 4. Advisor tokens are captured from usage.iterations and reported
    separately on TokenUsage.
-5. Advisor system-prompt guidance is prepended (not appended) so the
-   executor sees the timing instructions first.
+5. Advisor system-prompt guidance starts the volatile block, after the
+   stable cached block.
 """
 
 from __future__ import annotations
@@ -128,6 +128,10 @@ class TestBaselineUnchanged:
         assert "tools" not in call_kwargs, "baseline path must not declare tools"
         assert "betas" not in call_kwargs, "baseline path must not set beta header"
         assert call_kwargs["max_tokens"] == 8192
+        system = call_kwargs["system"]
+        assert isinstance(system, list) and len(system) == 2
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in system[1]
 
 
 # ---------------------------------------------------------------------------
@@ -187,12 +191,39 @@ class TestAdvisorPathDeclaration:
         )
 
         system_prompt = mock_beta.create.call_args.kwargs["system"]
-        assert "advisor" in system_prompt.lower()
+        assert system_prompt[0]["cache_control"] == {"type": "ephemeral"}
+        assert "advisor" in system_prompt[1]["text"].lower()
+        assert "advisor" not in system_prompt[0]["text"].lower()
         # Must nudge the executor to consult BEFORE writing SQL
         assert any(
-            phrase in system_prompt.lower()
+            phrase in system_prompt[1]["text"].lower()
             for phrase in ("before substantive", "before writing", "call advisor")
         )
+
+    def test_codex_guidance_follows_cached_block(
+        self, llm_client: LLMClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_messages = llm_client._mock_anthropic.messages  # type: ignore[attr-defined]
+        mock_messages.create.return_value = _fake_response(
+            [_fake_block("text", text=f"```json\n{VALID_SQL_JSON}\n```")]
+        )
+        monkeypatch.setattr(llm_client._settings, "advisor_backend", "codex")
+        llm_client._openai_client = MagicMock()
+        llm_client._openai_client.responses.create.return_value = SimpleNamespace(
+            output_text="1. Use OVST and aggregate safely."
+        )
+
+        llm_client.generate_sql(
+            user_question="q",
+            schema_context="schema",
+            concepts_context="concepts",
+            use_advisor=True,
+        )
+
+        system_prompt = mock_messages.create.call_args.kwargs["system"]
+        assert system_prompt[0]["cache_control"] == {"type": "ephemeral"}
+        assert "CODEX ADVISOR GUIDANCE" not in system_prompt[0]["text"]
+        assert system_prompt[1]["text"].startswith("## CODEX ADVISOR GUIDANCE")
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 ADVISOR_BETA_HEADER = "advisor-tool-2026-03-01"
 ADVISOR_TOOL_TYPE = "advisor_20260301"
 
-# Prepended to the system prompt when the Anthropic advisor tool is enabled.
+# Added to the volatile system block when the Anthropic advisor tool is enabled.
 # Adapted from the official guidance at
 # https://platform.claude.com/docs/en/docs/agents-and-tools/tool-use/advisor-tool
 ADVISOR_SYSTEM_GUIDANCE = """You have access to an `advisor` tool backed by a stronger reviewer model (Opus). \
@@ -46,7 +46,7 @@ The advisor should respond in under 100 words, using enumerated steps, not expla
 
 """
 
-# Template prepended to system prompt when Codex (OpenAI) advisor guidance is injected.
+# Template added to the volatile system block when Codex advisor guidance is injected.
 CODEX_ADVISOR_GUIDANCE_HEADER = """## CODEX ADVISOR GUIDANCE (from OpenAI {model})
 An external OpenAI model reviewed this task before you. Follow the numbered steps below closely.
 If any step conflicts with a verified schema constraint, adapt and note the deviation.
@@ -104,15 +104,17 @@ class LLMClient:
 
         if use_advisor and self._settings.advisor_backend == "codex":
             guidance = self._call_codex_advisor(schema_context, concepts_context, user_question)
-            system_prompt = (
+            system_prompt[1]["text"] = (
                 CODEX_ADVISOR_GUIDANCE_HEADER.format(
                     model=self._settings.codex_model,
                     guidance=guidance,
                 )
-                + system_prompt
+                + system_prompt[1]["text"]
             )
         elif use_advisor:
-            system_prompt = ADVISOR_SYSTEM_GUIDANCE + system_prompt
+            system_prompt[1]["text"] = (
+                ADVISOR_SYSTEM_GUIDANCE + system_prompt[1]["text"]
+            )
 
         messages = self._build_messages(user_question, conversation_history)
 
@@ -252,8 +254,12 @@ Numbered steps only. No explanations. Under 100 words."""
             advisor_output_tokens=advisor_out,
         )
 
-    def _build_system_prompt(self, schema_context: str, concepts_context: str) -> str:
-        """Build the system prompt with schema and concept context.
+    def _build_system_prompt(
+        self,
+        schema_context: str,
+        concepts_context: str,
+    ) -> list[dict[str, Any]]:
+        """Build stable cached and volatile system prompt blocks.
 
         Lean prompt: only universal rules that apply to every query.
         Domain knowledge (drugs, procedures, vitals, routing) lives in
@@ -268,7 +274,7 @@ Numbered steps only. No explanations. Under 100 words."""
         current_year = now.year
         last_year = current_year - 1
 
-        return f"""You are a SQL expert for KCMH HIS. Convert questions to safe, read-only PostgreSQL.
+        stable_prompt = f"""You are a SQL expert for KCMH HIS. Convert questions to safe, read-only PostgreSQL.
 
 ## SAFETY RULES
 1. SELECT only. No INSERT/UPDATE/DELETE/DROP/CREATE/ALTER.
@@ -288,7 +294,7 @@ Schema marks: n=numeric, t=text, d=date, b=bool. Match literals to types:
 - Use IS NULL not =NULL. LOWER() for case-insensitive text. Status codes are often numeric.
 - NEVER fabricate or hardcode meditem/ICD codes in VALUES clauses. Always query reference tables dynamically.
 
-## TABLE SCHEMA
+## TABLE-SCHEMA GUIDANCE
 Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns for selected tables).
 - Prefer [DETAILED] tables. Non-detailed can use universal keys (hn/vn/an).
 - Do NOT invent tables. Heed ! warnings for common column mistakes.
@@ -301,8 +307,6 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 - Cross-year: single scan + EXTRACT(YEAR FROM date), never scan same table twice.
 - Numeric text (lab results): CASE WHEN col ~ '^[0-9]+(\\.[0-9]+)?$' THEN CAST(col AS NUMERIC) END
 
-{schema_context}
-
 ## CONCEPTS (domain knowledge - ALWAYS check before writing SQL)
 {concepts_context}
 
@@ -314,10 +318,23 @@ Two sections: TABLE DIRECTORY (all tables, compact) + DETAILED SCHEMA (columns f
 {{{{"needs_clarification":false,"clarification_question":null,"clarified_question":"...","assumptions":["..."],"concepts_used":["..."],"sql":"SELECT ...","validation_checks":["..."],"answer_plan":"...","confidence":"high|medium|low"}}}}
 ```
 If unsure about table/column, set needs_clarification=true.
+"""
+
+        volatile_prompt = f"""## TABLE SCHEMA
+{schema_context}
 
 ## DATES
 Today: {current_date} | Year: {current_year} | Last year: {last_year}
 """
+
+        return [
+            {
+                "type": "text",
+                "text": stable_prompt,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": volatile_prompt},
+        ]
 
     def _build_messages(
         self,

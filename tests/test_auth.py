@@ -11,11 +11,20 @@ Tests cover:
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
-from app.auth import UserStore, create_session_token, decode_session_token
-from app.config import DEFAULT_SECRET_KEY, Settings
+from app.auth import (
+    UserStore,
+    create_session_token,
+    decode_session_token,
+    get_current_user_from_cookie,
+    require_auth,
+)
+from app.config import DEFAULT_SECRET_KEY, Settings, get_settings
 from app.models import UserInfo
 
 
@@ -107,6 +116,13 @@ class TestCredentialVerification:
         result = store.verify("ALICE@HOSPITAL.ORG", "12345")
         assert result is not None
 
+    def test_password_uses_constant_time_comparison(self, store: UserStore):
+        with patch("app.auth.hmac.compare_digest", return_value=True) as compare:
+            result = store.verify("alice@hospital.org", "12345")
+
+        assert result is not None
+        compare.assert_called_once_with("12345", "12345")
+
 
 class TestRoleAssignment:
     """Test super_user vs standard_user role assignment."""
@@ -185,6 +201,47 @@ class TestSessionToken:
     def test_empty_token_returns_none(self):
         result = decode_session_token("")
         assert result is None
+
+
+def _request_with_session_token(token: str) -> Request:
+    cookie_name = get_settings().session_cookie_name
+    return Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [(b"cookie", f"{cookie_name}={token}".encode())],
+    })
+
+
+class TestLiveSessionRevalidation:
+    @pytest.mark.asyncio
+    async def test_removed_user_is_rejected(
+        self, store: UserStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        user = store.get_user("alice@hospital.org")
+        assert user is not None
+        request = _request_with_session_token(create_session_token(user))
+        store._users.pop(user.email)
+        monkeypatch.setattr("app.auth.get_user_store", lambda: store)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_auth(request)
+
+        assert exc_info.value.status_code == 401
+
+    def test_cookie_super_user_is_demoted_from_live_store(
+        self, store: UserStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        user = store.get_user("bob@hospital.org")
+        assert user is not None and user.role == "super_user"
+        request = _request_with_session_token(create_session_token(user))
+        store._super_users.remove(user.email)
+        monkeypatch.setattr("app.auth.get_user_store", lambda: store)
+
+        current_user = get_current_user_from_cookie(request)
+
+        assert current_user is not None
+        assert current_user.role == "standard_user"
 
 
 class TestRuntimeSecretValidation:

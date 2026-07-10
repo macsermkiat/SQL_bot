@@ -5,6 +5,7 @@ Authentication module: CSV-based user loading, session management, role assignme
 from __future__ import annotations
 
 import csv
+import hmac
 import json
 import logging
 import threading
@@ -75,7 +76,16 @@ class UserStore:
         if user is None:
             return None
 
-        if user["id"] != password.strip():
+        if not hmac.compare_digest(user["id"], password.strip()):
+            return None
+
+        return self.get_user(email_lower)
+
+    def get_user(self, email: str) -> UserInfo | None:
+        """Return current user details and role from the live store."""
+        email_lower = email.strip().lower()
+        user = self._users.get(email_lower)
+        if user is None:
             return None
 
         role = (
@@ -216,7 +226,10 @@ def get_current_user_from_cookie(request: Request) -> UserInfo | None:
     token = request.cookies.get(settings.session_cookie_name)
     if not token:
         return None
-    return decode_session_token(token)
+    cookie_user = decode_session_token(token)
+    if cookie_user is None:
+        return None
+    return get_user_store().get_user(cookie_user.email)
 
 
 async def require_auth(request: Request) -> UserInfo:

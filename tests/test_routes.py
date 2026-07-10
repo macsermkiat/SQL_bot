@@ -12,12 +12,39 @@ Tests cover:
 - Rate limiting integration
 """
 
+import os
+
 import pytest
 from starlette.testclient import TestClient
+
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-real")
 
 from app.auth import create_session_token
 from app.main import app
 from app.models import UserInfo
+
+
+class _RouteUserStore:
+    def get_user(self, email: str) -> UserInfo | None:
+        users = {
+            "test@hospital.org": _standard_user(),
+            "admin@hospital.org": _super_user(),
+        }
+        return users.get(email.strip().lower())
+
+
+class _DisconnectedDatabase:
+    @staticmethod
+    def test_connection() -> bool:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def isolated_auth_and_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep route tests isolated from live users and the hospital database."""
+    store = _RouteUserStore()
+    monkeypatch.setattr("app.auth.get_user_store", lambda: store)
+    monkeypatch.setattr("app.main.get_db", lambda: _DisconnectedDatabase())
 
 
 @pytest.fixture()

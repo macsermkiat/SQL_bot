@@ -4,9 +4,11 @@ FastAPI application with authentication, rate limiting, and security headers.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -51,6 +53,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # ---------- App setup ----------
 
 
+async def _periodic_login_limiter_cleanup(
+    interval_seconds: float = 600,
+) -> None:
+    """Clean expired login-attempt records at a fixed interval."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        get_login_limiter().cleanup()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
@@ -70,11 +81,18 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Database connection failed - queries will not work")
 
-    yield
-
-    # Cleanup
-    db.close()
-    logger.info("KCMH SQL Bot stopped")
+    limiter_cleanup_task = asyncio.create_task(
+        _periodic_login_limiter_cleanup(),
+        name="login-rate-limiter-cleanup",
+    )
+    try:
+        yield
+    finally:
+        limiter_cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await limiter_cleanup_task
+        db.close()
+        logger.info("KCMH SQL Bot stopped")
 
 
 app = FastAPI(
@@ -319,6 +337,7 @@ async def chat(request: ChatRequest, user: UserInfo = Depends(require_auth)):
         response = await orchestrator.handle_message(
             request,
             user_email=user.email,
+            user_role=user.role,
         )
 
         # Strip sensitive fields for standard users
@@ -332,7 +351,8 @@ async def chat(request: ChatRequest, user: UserInfo = Depends(require_auth)):
         raise HTTPException(status_code=403, detail="Forbidden")
     except Exception as e:
         logger.exception("Chat error for user %s", user.email)
-        raise HTTPException(status_code=500, detail=str(e))
+        detail = str(e) if user.role == "super_user" else "Internal server error"
+        raise HTTPException(status_code=500, detail=detail)
 
 
 @app.post("/api/chat/stream")

@@ -36,6 +36,27 @@ FORBIDDEN_KEYWORDS: frozenset[str] = frozenset({
     "SET ROLE", "RESET", "DISCARD", "LOAD", "UNLOAD",
 })
 
+FORBIDDEN_FUNCTIONS: frozenset[str] = frozenset({
+    "pg_sleep", "pg_sleep_for", "pg_sleep_until", "pg_read_file",
+    "pg_read_binary_file", "pg_ls_dir", "pg_stat_file", "dblink",
+    "dblink_exec", "dblink_connect", "lo_import", "lo_export",
+    "pg_terminate_backend", "pg_cancel_backend", "pg_reload_conf",
+    "query_to_xml", "database_to_xml", "table_to_xml", "pg_logdir_ls",
+    "pg_execute_server_program",
+})
+
+ANONYMIZING_AGGREGATES = (
+    exp.Count,
+    exp.Sum,
+    exp.Avg,
+    exp.Min,
+    exp.Max,
+    exp.Stddev,
+    exp.StddevPop,
+    exp.Variance,
+    exp.VariancePop,
+)
+
 # PHI columns that must NEVER appear in SELECT output
 PHI_COLUMNS: frozenset[str] = frozenset({
     # Patient identifiers
@@ -96,6 +117,11 @@ class ForbiddenKeywordError(SQLGuardError):
     pass
 
 
+class ForbiddenFunctionError(SQLGuardError):
+    """Dangerous SQL function detected."""
+    pass
+
+
 class UnknownTableError(SQLGuardError):
     """Table not found in catalog."""
     pass
@@ -151,6 +177,7 @@ class ValidationResult:
     has_limit: bool = False
     limit_value: int | None = None
     phi_columns_found: list[str] = field(default_factory=list)
+    count_columns: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     join_warnings: list[JoinWarning] = field(default_factory=list)
 
@@ -289,10 +316,9 @@ def _resolve_column_tables(
 
 def _is_inside_aggregate(expr: exp.Expression) -> bool:
     """Check if expression is inside an aggregate function."""
-    agg_types = (exp.Count, exp.Sum, exp.Avg, exp.Min, exp.Max, exp.ArrayAgg)
     parent = expr.parent
     while parent:
-        if isinstance(parent, agg_types):
+        if isinstance(parent, ANONYMIZING_AGGREGATES):
             return True
         parent = parent.parent
     return False
@@ -335,8 +361,7 @@ def _collect_output_columns(
     Columns inside aggregate functions are NOT collected (they don't expose individual values).
     """
     # Check if we're entering an aggregate
-    agg_types = (exp.Count, exp.Sum, exp.Avg, exp.Min, exp.Max, exp.ArrayAgg)
-    if isinstance(expr, agg_types):
+    if isinstance(expr, ANONYMIZING_AGGREGATES):
         # Don't collect columns inside aggregates - they don't expose individual values
         return
 
@@ -362,6 +387,35 @@ def _collect_output_columns(
         # Recurse into child expressions
         for child in expr.iter_expressions():
             _collect_output_columns(child, columns, inside_aggregate)
+
+
+def _extract_count_columns(parsed: exp.Expression) -> list[str]:
+    """Return result-column names for COUNT projections."""
+    count_columns: list[str] = []
+    for select in parsed.find_all(exp.Select):
+        for projection in select.expressions:
+            expression = projection.this if isinstance(projection, exp.Alias) else projection
+            if not isinstance(expression, exp.Count):
+                continue
+            name = projection.alias_or_name
+            if not name or name == "*":
+                name = expression.sql_name().lower()
+            if name not in count_columns:
+                count_columns.append(name)
+    return count_columns
+
+
+def _find_forbidden_function(parsed: exp.Expression) -> str | None:
+    """Return the first denylisted function used by the statement."""
+    for function in parsed.find_all(exp.Func):
+        name = (
+            function.name
+            if isinstance(function, exp.Anonymous)
+            else function.sql_name()
+        )
+        if name.lower() in FORBIDDEN_FUNCTIONS:
+            return name.lower()
+    return None
 
 
 def _extract_all_columns(parsed: exp.Expression) -> dict[str, list[str]]:
@@ -793,12 +847,21 @@ def validate_sql(
             error_type="ForbiddenStatementError",
         )
 
+    forbidden_function = _find_forbidden_function(parsed)
+    if forbidden_function:
+        return ValidationResult(
+            valid=False,
+            error=f"Forbidden function: {forbidden_function}",
+            error_type="ForbiddenFunctionError",
+        )
+
     # Extract metadata
     tables_used = _extract_tables(parsed)
     table_aliases = _extract_table_aliases(parsed)
     select_columns = _extract_output_columns(parsed)
     all_columns = _extract_all_columns(parsed)
     has_agg = _has_aggregation(parsed)
+    count_columns = _extract_count_columns(parsed)
     limit_val = _get_limit_value(parsed)
     warnings: list[str] = []
 
@@ -974,6 +1037,7 @@ def validate_sql(
         limit_value=limit_val,
         warnings=warnings,
         join_warnings=join_warnings,
+        count_columns=count_columns,
     )
 
 
@@ -1007,6 +1071,7 @@ def guard_sql(
 
     error_classes = {
         "ForbiddenKeywordError": ForbiddenKeywordError,
+        "ForbiddenFunctionError": ForbiddenFunctionError,
         "ForbiddenStatementError": ForbiddenStatementError,
         "SQLParseError": SQLParseError,
         "SelectStarError": SelectStarError,

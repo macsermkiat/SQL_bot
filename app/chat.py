@@ -53,6 +53,32 @@ from app.validators import run_sanity_checks
 logger = logging.getLogger(__name__)
 
 
+def _suppress_small_cells(
+    rows: list[list[Any]],
+    columns: list[str],
+    count_columns: list[str],
+    minimum_count: int = 5,
+) -> tuple[list[list[Any]], int]:
+    """Remove rows containing count values below the privacy threshold."""
+    count_indexes = [
+        index for index, column in enumerate(columns)
+        if column in count_columns
+    ]
+    if not count_indexes:
+        return rows, 0
+
+    filtered_rows = [
+        row for row in rows
+        if not any(
+            isinstance(row[index], (int, float))
+            and not isinstance(row[index], bool)
+            and row[index] < minimum_count
+            for index in count_indexes
+        )
+    ]
+    return filtered_rows, len(rows) - len(filtered_rows)
+
+
 class ChatOrchestrator:
     """Orchestrates the chat flow for SQL generation and execution."""
 
@@ -1346,6 +1372,19 @@ class ChatOrchestrator:
                 logger.debug("Learning capture failed (non-critical): %s", learn_err)
 
         # --- Post-loop: sanity checks, format answer ---
+        assumptions = list(gen.assumptions)
+        filtered_rows, suppressed_count = _suppress_small_cells(
+            result.rows, result.columns, val.count_columns,
+        )
+        if suppressed_count:
+            result = result.model_copy(update={
+                "rows": filtered_rows,
+                "row_count": len(filtered_rows),
+            })
+            assumptions.append(
+                "Rows with counts below 5 were suppressed for privacy (k-anonymity)."
+            )
+
         yield _progress("sanity_check", "Validating results...", 80)
         sanity_results = run_sanity_checks(result, gen.validation_checks)
         failed_checks = [c for c in sanity_results if not c.passed]
@@ -1354,7 +1393,7 @@ class ChatOrchestrator:
         cancellable.check_cancelled()
         answer, fmt_usage = await asyncio.to_thread(
             self._format_answer_impl, question, sql, result,
-            gen.assumptions, gen.concepts_used, failed_checks,
+            assumptions, gen.concepts_used, failed_checks,
         )
         _accumulate(fmt_usage)
 
@@ -1363,7 +1402,7 @@ class ChatOrchestrator:
 
         response = ChatResponse(
             session_id=session_id, answer=answer, sql=sql,
-            assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+            assumptions=assumptions, concepts_used=gen.concepts_used,
             confidence=gen.confidence, sanity_checks=sanity_results,
             query_result=result, token_usage=total_usage,
         )
@@ -1372,7 +1411,7 @@ class ChatOrchestrator:
              execution_time_ms=result.execution_time_ms if result else None,
              row_count=result.row_count if result else None,
              result_truncated=result.truncated if result else None,
-             assumptions=gen.assumptions, concepts_used=gen.concepts_used,
+             assumptions=assumptions, concepts_used=gen.concepts_used,
              confidence=gen.confidence, answer=answer,
              sanity_checks=[c.model_dump() for c in sanity_results])
         yield _complete(response)

@@ -175,6 +175,24 @@ class TestPHIInAggregations:
         result = validate_sql(sql)
         assert result.valid
 
+    def test_array_agg_phi_blocked(self):
+        result = validate_sql("SELECT array_agg(hn) FROM ovst LIMIT 10")
+        assert not result.valid
+        assert result.error_type == "PHIExposureError"
+
+    def test_jsonb_agg_phi_blocked(self):
+        result = validate_sql("SELECT jsonb_agg(hn) FROM ovst LIMIT 10")
+        assert not result.valid
+        assert result.error_type == "PHIExposureError"
+
+    def test_array_agg_non_phi_allowed(self):
+        result = validate_sql("SELECT array_agg(vstdate) FROM ovst LIMIT 10")
+        assert result.valid
+
+    def test_count_phi_allowed(self):
+        result = validate_sql("SELECT COUNT(hn) FROM ovst")
+        assert result.valid
+
 
 class TestMixedQueries:
     """Test queries with mixed safe and PHI columns."""

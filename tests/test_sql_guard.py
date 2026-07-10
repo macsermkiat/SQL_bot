@@ -90,6 +90,45 @@ class TestStatementTypeValidation:
         assert "GRANT" in result.error
 
 
+class TestForbiddenFunctions:
+    """Test that dangerous PostgreSQL functions are blocked."""
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT pg_sleep(10) LIMIT 1",
+            "SELECT pg_read_file('/etc/passwd') LIMIT 1",
+            "SELECT dblink('connection', 'SELECT 1') LIMIT 1",
+        ],
+    )
+    def test_forbidden_function_blocked(self, sql):
+        result = validate_sql(sql)
+        assert not result.valid
+        assert result.error_type == "ForbiddenFunctionError"
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT COUNT(*) FROM ovst",
+            "SELECT EXTRACT(YEAR FROM vstdate) FROM ovst LIMIT 1",
+            "SELECT LOWER(ovstost) FROM ovst LIMIT 1",
+            "SELECT COALESCE(ovstost, 'unknown') FROM ovst LIMIT 1",
+            "SELECT CAST(vn AS TEXT) FROM ovst LIMIT 1",
+        ],
+    )
+    def test_normal_function_allowed(self, sql):
+        assert validate_sql(sql).valid
+
+
+def test_count_columns_are_collected():
+    result = validate_sql(
+        "SELECT vstdate, COUNT(*) AS n, COUNT(vn) "
+        "FROM ovst GROUP BY vstdate"
+    )
+    assert result.valid
+    assert result.count_columns == ["n", "count"]
+
+
 class TestPHIBlocking:
     """Test that PHI columns are blocked in SELECT output."""
 
